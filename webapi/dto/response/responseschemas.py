@@ -11,9 +11,18 @@ class ErrorResponseDTO(BaseModel):
     errorCode:int | None = None
 
 
-class LLMQueryResponseDTO(BaseModel):
-    llm_response: str | None = None
+class SourceDocumentDTO(BaseModel):
+    """Represents a source document used for the answer."""
+    source: str
+    page_content: str
 
+class LLMQueryResponseDTO(BaseModel):
+    """The specific data payload for an LLM query response."""
+    answer: str
+    source_documents: List[SourceDocumentDTO] = []
 
 class ResponseDTO(ErrorResponseDTO, Generic[T]):
-    res:T | None = None
+    """A generic, standardized response wrapper."""
+    success: bool = True
+    message: Optional[str] = None
+    data: Optional[T] = None
