@@ -1,0 +1,19 @@
+# D:/Codes/pdf-rag/requirements.txt
+
+# Core LLM and framework libraries
+langchain-community
+langchain-core
+ollama
+langchain-qdrant # <-- Add for Qdrant integration
+qdrant-client    # <-- Add the Qdrant client
+sentence-transformers
+
+# PDF Parsing Libraries
+unstructured[pdf]
+marker-pdf
+
+Pillow
+uvicorn[standard]
+gunicorn
+pydantic
+fastapi
