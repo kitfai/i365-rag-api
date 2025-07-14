@@ -1,4 +1,4 @@
-# D:/infra365/codes/rag-git/core/service/qdrant-service.py
+# D:/infra365/codes/rag-git/core/service/qdrant_service.py
 
 import pickle
 from pathlib import Path
