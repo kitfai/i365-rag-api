@@ -18,6 +18,7 @@ from langchain_qdrant import QdrantVectorStore
 from langchain_community.embeddings import HuggingFaceEmbeddings
 import qdrant_client
 from qdrant_client.http import models
+import torch # Import torch to check for GPU
 
 # --- PDF Processing ---
 from unstructured.partition.pdf import partition_pdf
@@ -110,9 +111,13 @@ class QdrantRAGService:
         # This is the exact same logic as your original get_retriever function,
         # just refactored as a method of this class.
         child_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+        # Check if a CUDA-enabled GPU is available, otherwise fall back to CPU.
+        # This makes the service portable and robust.
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        print(f"--- Using device: {device} for embeddings ---")
         embeddings = HuggingFaceEmbeddings(
             model_name=EMBEDDING_MODEL_NAME,
-            model_kwargs={'device': 'cpu'}
+            model_kwargs={'device': device}
         )
         qdrant_client_instance = qdrant_client.QdrantClient(path=str(DB_PATH))
 
