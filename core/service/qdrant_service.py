@@ -154,7 +154,7 @@ class QdrantRAGService:
         vectorstore = QdrantVectorStore(
             client=qdrant_client_instance,
             collection_name=QDRANT_COLLECTION_NAME,
-            embeddings=embeddings,
+            embedding=embeddings,
         )
 
         store = EncoderBackedStore(
