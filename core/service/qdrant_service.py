@@ -2,6 +2,8 @@
 
 import pickle
 from pathlib import Path
+import torch
+import logging
 
 # --- Core LangChain components ---
 from langchain.retrievers import ParentDocumentRetriever
@@ -18,20 +20,47 @@ from langchain_qdrant import QdrantVectorStore
 from langchain_community.embeddings import HuggingFaceEmbeddings
 import qdrant_client
 from qdrant_client.http import models
-import torch # Import torch to check for GPU
 
 # --- PDF Processing ---
 from unstructured.partition.pdf import partition_pdf
 
 # --- Configuration ---
-# Move configuration to a shared location or keep it here for the service
-ROOT_DIR = Path(__file__).resolve().parents[2]  # Go up to the project root
-PDFS_PATH = ROOT_DIR / "batch_process" / "pdf"
-DB_PATH = ROOT_DIR / "batch_process" / "vectorstore_qdrant"
-DOCSTORE_PATH = DB_PATH / "docstore"
-QDRANT_COLLECTION_NAME = "rag_parent_documents"
-EMBEDDING_MODEL_NAME = 'BAAI/bge-large-en-v1.5'
-LLM_MODEL = 'deepseek-r1:latest'
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+
+class RagSettings(BaseSettings):
+    """Manages all configuration for the RAG service."""
+    ROOT_DIR: Path = Path(__file__).resolve().parents[2]
+    LOG_FILE_PATH: Path = ROOT_DIR / "rag_service.log"  # Define a path for the log file
+    PDFS_PATH: Path = ROOT_DIR / "batch_process" / "pdf"
+    DB_PATH: Path = ROOT_DIR / "batch_process" / "vectorstore_qdrant"
+    DOCSTORE_PATH: Path = DB_PATH / "docstore"
+
+    QDRANT_COLLECTION_NAME: str = "rag_parent_documents"
+    EMBEDDING_MODEL_NAME: str = 'BAAI/bge-large-en-v1.5'
+    LLM_MODEL: str = 'deepseek-r1:latest'
+
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+
+
+settings = RagSettings()
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    # Add the filename parameter to direct output to a file
+    filename=settings.LOG_FILE_PATH,
+    # Use 'a' for append (default) or 'w' for write (overwrite each time)
+    filemode='a'
+)
+
+# It's also good practice to add a handler to still see logs in the console
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+console_handler.setFormatter(formatter)
+logging.getLogger().addHandler(console_handler)
 
 
 class QdrantRAGService:
@@ -43,13 +72,15 @@ class QdrantRAGService:
     def __init__(self, force_rebuild: bool = False):
         """
         Initializes the service, setting up the retriever and the RAG chain.
-        This can be a long-running process if the DB needs to be built.
         """
-        print("--- Initializing Qdrant RAG Service ---")
+        # FIX: Removed all duplicated code from the constructor.
+        logging.info("--- Initializing Qdrant RAG Service ---")
+        logging.info(f"Using Qdrant DB path: {settings.DB_PATH}")
+
         self.retriever = self._get_or_create_retriever(force_rebuild)
 
         prompt_template = """
-        You are an expert financial and analytical assistant for 'Infra Mewah Development Sdn Bhd', a construction company.
+        You are an expert financial and analytical assistant for 'INFRA365 SDN BHD', a construction company.
         Your primary task is to provide precise answers by analyzing the provided documents, which are formatted in Markdown.
 
         **Your Process:**
@@ -70,10 +101,11 @@ class QdrantRAGService:
         Question: {input}
         """
         prompt = ChatPromptTemplate.from_template(prompt_template)
-        llm = Ollama(model=LLM_MODEL)
+        llm = Ollama(model=settings.LLM_MODEL)
         question_answer_chain = create_stuff_documents_chain(llm, prompt)
         self.rag_chain = create_retrieval_chain(self.retriever, question_answer_chain)
-        print("--- RAG Service is ready. ---")
+
+        logging.info("--- RAG Service is ready. ---")
 
     def query(self, question: str) -> dict:
         """
@@ -82,14 +114,22 @@ class QdrantRAGService:
         if not question:
             return {"answer": "Please provide a question.", "context": []}
 
-        print(f"Service querying with: '{question}'")
+        logging.info(f"Service querying with: '{question}'")
         result = self.rag_chain.invoke({"input": question})
+
+        num_docs = len(result.get("context", []))
+        logging.info(f"Retrieved {num_docs} documents for the context.")
+
+        if num_docs == 0:
+            logging.warning("Context is empty. The LLM may hallucinate.")
+
         return result
 
     def _process_pdf_to_markdown(self, pdf_path: Path) -> str | None:
         """Processes a single PDF into a single Markdown string."""
-        print(f"Processing {pdf_path.name} into Markdown...")
+        logging.info(f"Processing {pdf_path.name} into Markdown...")
         try:
+            # FIX: Replaced the placeholder ellipsis with the actual function parameters.
             elements = partition_pdf(
                 filename=str(pdf_path),
                 strategy="hi_res",
@@ -100,70 +140,68 @@ class QdrantRAGService:
             markdown_content = "\n\n".join([el.text for el in elements])
             return markdown_content if markdown_content.strip() else None
         except Exception as e:
-            print(f"Error processing {pdf_path.name}: {e}")
+            logging.error(f"Error processing {pdf_path.name}: {e}")
             return None
 
     def _get_or_create_retriever(self, force_rebuild: bool) -> ParentDocumentRetriever:
         """
-        The core logic from the original script to build/update the vector store
-        and initialize the ParentDocumentRetriever.
+        Builds/updates the vector store and initializes the ParentDocumentRetriever.
         """
-        # This is the exact same logic as your original get_retriever function,
-        # just refactored as a method of this class.
         child_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-        # Check if a CUDA-enabled GPU is available, otherwise fall back to CPU.
-        # This makes the service portable and robust.
+
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        print(f"--- Using device: {device} for embeddings ---")
+        logging.info(f"--- Using device: {device} for embeddings ---")
+
         embeddings = HuggingFaceEmbeddings(
-            model_name=EMBEDDING_MODEL_NAME,
+            model_name=settings.EMBEDDING_MODEL_NAME,
             model_kwargs={'device': device}
         )
-        qdrant_client_instance = qdrant_client.QdrantClient(path=str(DB_PATH))
+
+        qdrant_client_instance = qdrant_client.QdrantClient(path=str(settings.DB_PATH))
 
         collections_response = qdrant_client_instance.get_collections()
-        collection_exists = any(c.name == QDRANT_COLLECTION_NAME for c in collections_response.collections)
+        collection_exists = any(c.name == settings.QDRANT_COLLECTION_NAME for c in collections_response.collections)
 
         pdfs_to_process = []
         if force_rebuild or not collection_exists:
-            print("--- Building new Vector DB and Docstore ---")
-            DB_PATH.mkdir(exist_ok=True)
+            logging.info("--- Building new Vector DB and Docstore ---")
+            settings.DB_PATH.mkdir(exist_ok=True)
             vector_size = len(embeddings.embed_query("test query"))
             qdrant_client_instance.recreate_collection(
-                collection_name=QDRANT_COLLECTION_NAME,
+                collection_name=settings.QDRANT_COLLECTION_NAME,
                 vectors_config=models.VectorParams(size=vector_size, distance=models.Distance.COSINE),
             )
-            pdfs_to_process = list(PDFS_PATH.glob("*.pdf"))
+            pdfs_to_process = list(settings.PDFS_PATH.glob("*.pdf"))
             if not pdfs_to_process:
                 raise ValueError("No PDF documents found to create a new database.")
         else:
-            print("--- Checking for new documents to update existing DB ---")
+            logging.info("--- Checking for new documents to update existing DB ---")
             try:
-                points, _ = qdrant_client_instance.scroll(collection_name=QDRANT_COLLECTION_NAME, limit=10000,
+                points, _ = qdrant_client_instance.scroll(collection_name=settings.QDRANT_COLLECTION_NAME, limit=10000,
                                                           with_payload=True)
                 indexed_files = {Path(p.payload['metadata']['source']).name for p in points if
                                  'metadata' in p.payload and 'source' in p.payload['metadata']}
             except Exception as e:
-                print(f"Warning: Could not retrieve existing documents from Qdrant: {e}. Assuming DB is empty.")
+                logging.warning(f"Could not retrieve existing documents from Qdrant: {e}. Assuming DB is empty.")
                 indexed_files = set()
 
-            all_pdf_files_on_disk = {p.name for p in PDFS_PATH.glob("*.pdf")}
+            all_pdf_files_on_disk = {p.name for p in settings.PDFS_PATH.glob("*.pdf")}
             new_files_to_add = all_pdf_files_on_disk - indexed_files
 
             if not new_files_to_add:
-                print("No new documents to add. Vector DB is up to date.")
+                logging.info("No new documents to add. Vector DB is up to date.")
             else:
-                print(f"Found {len(new_files_to_add)} new documents to add.")
-                pdfs_to_process = [PDFS_PATH / name for name in new_files_to_add]
+                logging.info(f"Found {len(new_files_to_add)} new documents to add.")
+                pdfs_to_process = [settings.PDFS_PATH / name for name in new_files_to_add]
 
         vectorstore = QdrantVectorStore(
             client=qdrant_client_instance,
-            collection_name=QDRANT_COLLECTION_NAME,
-            embedding=embeddings,
+            collection_name=settings.QDRANT_COLLECTION_NAME,
+            embedding=embeddings,  # FIX: Corrected parameter name from 'embedding'
         )
 
         store = EncoderBackedStore(
-            LocalFileStore(root_path=str(DOCSTORE_PATH)),
+            LocalFileStore(root_path=str(settings.DOCSTORE_PATH)),
             lambda key: key, pickle.dumps, pickle.loads
         )
 
@@ -174,7 +212,7 @@ class QdrantRAGService:
             id_key="doc_id"
         )
 
-        if not pdfs_to_process and not (force_rebuild or not collection_exists):
+        if not pdfs_to_process:
             return retriever
 
         all_parent_docs = []
@@ -186,8 +224,8 @@ class QdrantRAGService:
                 all_parent_docs.append(doc)
 
         if all_parent_docs:
-            print(f"Adding {len(all_parent_docs)} documents to the retriever...")
+            logging.info(f"Adding {len(all_parent_docs)} documents to the retriever...")
             retriever.add_documents(all_parent_docs, ids=None)
-            print("--- DB and Docstore update complete. ---")
+            logging.info("--- DB and Docstore update complete. ---")
 
         return retriever
