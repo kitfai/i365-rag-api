@@ -197,10 +197,9 @@ class QdrantRAGService:
         *List every single piece of evidence you used to construct the summary answer. For each monetary amount, specify which document it came from.*
         -   Fact 1 from Source X
         -   Fact 2 from Source Y
-        -   Fact 3 from Source Z
 
         ## Source Documents
-        *List the unique source documents you used to find the answer.*
+        *List the unique source documents you used to find the answer. List out the original file name used as reference*
         -   `source_document_1.pdf`
         -   `source_document_2.pdf`
         """
