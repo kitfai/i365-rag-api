@@ -4,14 +4,15 @@ import pickle
 from pathlib import Path
 import torch
 import logging
+from operator import itemgetter # <-- Import itemgetter
 
 # --- Core LangChain components ---
 from langchain.retrievers import ParentDocumentRetriever
 from langchain.storage import LocalFileStore, EncoderBackedStore
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
-from langchain.chains import create_retrieval_chain
-from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_core.runnables import RunnablePassthrough
+from langchain.chains import load_summarize_chain
 from langchain_community.llms import Ollama
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -28,11 +29,10 @@ from unstructured.partition.pdf import partition_pdf
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-
 class RagSettings(BaseSettings):
     """Manages all configuration for the RAG service."""
     ROOT_DIR: Path = Path(__file__).resolve().parents[2]
-    LOG_FILE_PATH: Path = ROOT_DIR / "rag_service.log"  # Define a path for the log file
+    LOG_FILE_PATH: Path = ROOT_DIR / "rag_service.log"
     PDFS_PATH: Path = ROOT_DIR / "batch_process" / "pdf"
     DB_PATH: Path = ROOT_DIR / "batch_process" / "vectorstore_qdrant"
     DOCSTORE_PATH: Path = DB_PATH / "docstore"
@@ -49,13 +49,10 @@ settings = RagSettings()
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    # Add the filename parameter to direct output to a file
     filename=settings.LOG_FILE_PATH,
-    # Use 'a' for append (default) or 'w' for write (overwrite each time)
     filemode='a'
 )
 
-# It's also good practice to add a handler to still see logs in the console
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.INFO)
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
@@ -73,37 +70,64 @@ class QdrantRAGService:
         """
         Initializes the service, setting up the retriever and the RAG chain.
         """
-        # FIX: Removed all duplicated code from the constructor.
         logging.info("--- Initializing Qdrant RAG Service ---")
         logging.info(f"Using Qdrant DB path: {settings.DB_PATH}")
 
         self.retriever = self._get_or_create_retriever(force_rebuild)
 
-        prompt_template = """
-        You are an expert financial and analytical assistant for 'INFRA365 SDN BHD', a construction company.
-        Your primary task is to provide precise answers by analyzing the provided documents, which are formatted in Markdown.
-
-        **Your Process:**
-        1.  Carefully read the user's question to understand the specific information required.
-        2.  The <context> below contains the full text of one or more documents in **Markdown format**. Pay close attention to the structure.
-        3.  Synthesize the information from the context to formulate your answer.
-        4.  Formulate your final answer based **ONLY** on the information found in the <context>.
-
-        **Crucial Rules:**
-        -   If the answer is not in the context, you MUST state: "I cannot find the information in the provided documents."
-        -   Do not make assumptions or use external knowledge.
-        -   When providing a total amount, list the individual amounts and their sources (e.g., "RM 5,000 from receipt #R-001") before giving the final total.
-
-        <context>
-        {context}
-        </context>
-
-        Question: {input}
-        """
-        prompt = ChatPromptTemplate.from_template(prompt_template)
         llm = Ollama(model=settings.LLM_MODEL)
-        question_answer_chain = create_stuff_documents_chain(llm, prompt)
-        self.rag_chain = create_retrieval_chain(self.retriever, question_answer_chain)
+
+        # Prompts remain the same
+        initial_prompt = ChatPromptTemplate.from_template(
+            """
+            You are an expert financial and analytical assistant.
+            Based ONLY on the following document context, please answer the user's question.
+
+            <context>
+            {context}
+            </context>
+
+            Question: {input}
+            """
+        )
+        refine_prompt = ChatPromptTemplate.from_template(
+            """
+            You are an expert financial and analytical assistant.
+            The user's original question is: {input}.
+            You have already provided an existing answer: {existing_answer}.
+
+            We have new context from another document below. If this new context adds
+            any relevant information, refine the original answer. Otherwise, return the
+            original answer. Do not make up information. Base your response ONLY on the
+            provided context.
+
+            <context>
+            {context}
+            </context>
+            """
+        )
+
+        document_combination_chain = load_summarize_chain(
+            llm=llm,
+            chain_type="refine",
+            question_prompt=initial_prompt,
+            refine_prompt=refine_prompt,
+            document_variable_name="context",
+        )
+
+        # --- WORLD-CLASS FIX: Simplify the chain to a single, direct step ---
+        self.rag_chain = (
+            {
+                # This dictionary creates the exact input needed by the final chain.
+                # "input_documents" is populated by retrieving documents using the question.
+                "input_documents": itemgetter("input") | self.retriever,
+                # "input" is populated by passing the original question through.
+                "input": itemgetter("input"),
+            }
+            # The output of the above is {"input_documents": [docs], "input": "user question"}
+            # This is now in the perfect format to be piped directly into the final chain.
+            | document_combination_chain
+        )
 
         logging.info("--- RAG Service is ready. ---")
 
@@ -117,19 +141,21 @@ class QdrantRAGService:
         logging.info(f"Service querying with: '{question}'")
         result = self.rag_chain.invoke({"input": question})
 
-        num_docs = len(result.get("context", []))
-        logging.info(f"Retrieved {num_docs} documents for the context.")
+        if result and result.get("output_text"):
+            logging.info("Successfully generated answer.")
+        else:
+            logging.warning("Chain did not produce an answer.")
 
-        if num_docs == 0:
-            logging.warning("Context is empty. The LLM may hallucinate.")
+        return {
+            "answer": result.get("output_text", "No answer could be generated."),
+            "context": result.get("input_documents", [])
+        }
 
-        return result
 
     def _process_pdf_to_markdown(self, pdf_path: Path) -> str | None:
         """Processes a single PDF into a single Markdown string."""
         logging.info(f"Processing {pdf_path.name} into Markdown...")
         try:
-            # FIX: Replaced the placeholder ellipsis with the actual function parameters.
             elements = partition_pdf(
                 filename=str(pdf_path),
                 strategy="hi_res",
@@ -197,7 +223,8 @@ class QdrantRAGService:
         vectorstore = QdrantVectorStore(
             client=qdrant_client_instance,
             collection_name=settings.QDRANT_COLLECTION_NAME,
-            embedding=embeddings,  # FIX: Corrected parameter name from 'embedding'
+            # CRITICAL FIX: The parameter name must be plural.
+            embedding=embeddings,
         )
 
         store = EncoderBackedStore(
