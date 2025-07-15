@@ -1,49 +1,63 @@
-# D:/infra365/codes/rag-git/batch_process/main.py
-
-# --- Project Imports ---
-# Make sure the project root is in the python path to find the core module
+import logging
 import sys
+import asyncio
 from pathlib import Path
+
+# Add the project root to the Python path to find the core module
+# This ensures that 'from core.service...' works correctly
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.service.qdrant_service import QdrantRAGService
 
+# Make the main function asynchronous so we can use 'await'
+async def main():
+    """
+    This script is dedicated to DOCUMENT INGESTION.
+    It initializes the RAG service and runs the document processing pipeline.
+    """
+    # --- Control Database Rebuilds Here ---
+    # Set to True only when you want to clear and re-process all documents.
+    # Set to False to only process new, unprocessed documents.
+    REBUILD_DB = True
+    # ------------------------------------
 
-def main():
-    """Main function to run the RAG query system."""
-    try:
-        # 1. Initialize the RAG Service. This will handle all the
-        #    DB creation/update logic automatically.
-        rag_service = QdrantRAGService()
-    except ValueError as e:
-        print(f"ERROR during service initialization: {e}")
-        return
+    if REBUILD_DB:
+        logging.info("--- Force Rebuild is ON. The database collection will be wiped and recreated. ---")
+    else:
+        logging.info("--- Force Rebuild is OFF. Only new documents will be processed. ---")
 
-    print("\n--- RAG System Ready. Ask your questions. Type 'exit' to quit. ---")
+    # 1. Initialize the service.
+    # The force_rebuild flag will ensure the collection is either cleared or ready.
+    #rag_service = QdrantRAGService(force_rebuild=REBUILD_DB)
+    rag_service = QdrantRAGService()
 
-    while True:
-        query = input("\nYour question: ")
-        if query.lower() == 'exit':
-            break
+    # 2. Explicitly run the document processing and ingestion pipeline.
+    # This will find all PDFs, process them, and upload them to the fresh collection.
+    #await rag_service.process_new_documents()
+    #rag_service = QdrantRAGService()
+    # --- Define Your Test Query Here ---
+    test_question = "List out all the details of billings billed to MR MUHAMEED AZAM BIN ALISAN"
+    test_doc_type = "Invoice"
+    # ---------------------------------
 
-        print("Thinking...")
-        # 2. Use the service's query method
-        result = rag_service.query(question=query)
+    logging.info(f"--- Running test query: '{test_question}' ---")
 
-        print("\n--- Parent Documents Retrieved ---")
-        if "context" in result and result["context"]:
-            for i, doc in enumerate(result["context"]):
-                source = doc.metadata.get('source', 'Unknown source')
-                print(f"--- Document {i + 1}: (Source: {source}) ---")
-                # For brevity, printing only the first 300 chars of the parent doc
-                print(doc.page_content[:300] + "...")
-                print("-" * 80)
-        else:
-            print("No documents were retrieved.")
+    # Await the asynchronous query method. This is the crucial fix.
+    result = await rag_service.query(question=test_question, doc_type=test_doc_type)
 
-        print("\nAnswer:")
-        print(result["answer"])
+    # Now 'result' will be the dictionary we expect.
+    print("\n--- Query Result ---")
+    print(f"\nAnswer:\n{result.get('answer')}")
 
+    if "context" in result and result["context"]:
+        print("\n--- Source Documents Retrieved ---")
+        for i, doc in enumerate(result["context"]):
+            print(f"  {i+1}. Source: {doc.metadata.get('source')}")
+            # Optionally print a snippet of the content
+            # print(f"     Content: {doc.page_content[:150].replace('\n', ' ')}...")
+    else:
+        print("\n--- No Source Documents Found ---")
 
+# Use asyncio.run() to execute the async main function from your script
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

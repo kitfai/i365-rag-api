@@ -17,3 +17,5 @@ uvicorn[standard]
 gunicorn
 pydantic
 fastapi
+langchain_ollama
+langchain_huggingface

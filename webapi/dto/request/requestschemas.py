@@ -5,5 +5,12 @@ from pydantic import BaseModel, EmailStr, computed_field
 from typing import List, Optional, Literal
 import os
 
+
+from typing import Optional
+
 class LLMQueryRequestDTO(BaseModel):
-    query:str
+    """
+    The request body for querying the RAG pipeline.
+    """
+    query: str
+    doc_type: Optional[str] = None
