@@ -146,46 +146,6 @@ class QdrantRAGService:
                 field_schema=models.PayloadSchemaType.KEYWORD,
             )
 
-    def _parse_llm_output(self, raw_answer: str) -> str:
-        """
-        Parses the raw output from the LLM to remove the <think> block and other
-        internal thoughts, returning only the user-facing answer.
-        """
-        # The "## Summary Answer" is a reliable delimiter to find the start of the real answer.
-        if "## Summary Answer" in raw_answer:
-            # We split the string at the delimiter and prepend it to the result
-            # to keep the header in the final output.
-            clean_part = raw_answer.split("## Summary Answer", 1)[1]
-            return "## Summary Answer" + clean_part.strip()
-
-        # Fallback in case the model doesn't follow the format perfectly
-        logging.warning("Could not find '## Summary Answer' delimiter in LLM output. Returning raw answer.")
-        return raw_answer.strip()
-
-    async def query(self, question: str, doc_type: Optional[str] = None) -> dict:
-        """
-        Performs a query using the constructed RAG chain.
-        """
-        if not question:
-            return {"answer": "Please provide a question.", "context": []}
-
-        logging.info(f"Service querying with: '{question}'")
-        start_time = time.time()
-
-        result = await self.rag_chain.ainvoke({"input": question})
-
-        end_time = time.time()
-        logging.info(f"RAG chain invocation took {end_time - start_time:.2f} seconds.")
-
-        # --- MODIFICATION: Parse the raw answer before returning it ---
-        raw_answer = result.get("answer", "No answer could be generated.")
-        clean_answer = self._parse_llm_output(raw_answer)
-
-        return {
-            "answer": clean_answer,
-            "context": result.get("context", [])
-        }
-
     async def process_new_documents(self):
         """Public method to run the async document processing task."""
         logging.info("Starting document ingestion process...")
