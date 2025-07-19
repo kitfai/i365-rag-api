@@ -151,3 +151,29 @@ sudo systemctl restart nginx
 
 sudo ufw allow 'Nginx Full'
 
+**If there are code changes**
+To reload ,
+sudo systemctl reload i365
+
+
+TO check ollama is using cuda or not
+journalctl -u ollama -f
+
+should have
+
+...
+time=... level=INFO source=gpu.go:123 msg="detected NVIDIA GPU"
+time=... level=INFO source=gpu.go:244 msg="total VRAM: 8192 MB, available VRAM: 8192 MB, loading model to VRAM"
+...
+
+
+Jul 19 15:31:48 infra365-poc-aid-02-akhmw ollama[116959]: llama_context:  CUDA_Host  output buffer size =     1.19 MiB
+Jul 19 15:31:48 infra365-poc-aid-02-akhmw ollama[116959]: llama_kv_cache_unified: kv_size = 8192, type_k = 'f16', type_v = 'f16', n_layer = 36, can_shift = 1, padding = 32
+Jul 19 15:31:48 infra365-poc-aid-02-akhmw ollama[116959]: llama_kv_cache_unified:      CUDA0 KV buffer size =  1152.00 MiB
+Jul 19 15:31:48 infra365-poc-aid-02-akhmw ollama[116959]: llama_kv_cache_unified: KV self size  = 1152.00 MiB, K (f16):  576.00 MiB, V (f16):  576.00 MiB
+Jul 19 15:31:48 infra365-poc-aid-02-akhmw ollama[116959]: llama_context:      CUDA0 compute buffer size =   560.00 MiB
+Jul 19 15:31:48 infra365-poc-aid-02-akhmw ollama[116959]: llama_context:  CUDA_Host compute buffer size =    24.01 MiB
+Jul 19 15:31:48 infra365-poc-aid-02-akhmw ollama[116959]: llama_context: graph nodes  = 1374
+Jul 19 15:31:48 infra365-poc-aid-02-akhmw ollama[116959]: llama_context: graph splits = 2
+Jul 19 15:31:48 infra365-poc-aid-02-akhmw ollama[116959]: time=2025-07-19T15:31:48.990Z level=INFO source=server.go:637 msg="llama runner started in 3.26 seconds"
+Jul 19 15:31:48 infra365-poc-aid-02-akhmw ollama[116959]: [GIN] 2025/07/19 - 15:31:48 | 200 |  4.187647165s |       127.0.0.1 | POST     "/api/generate"
