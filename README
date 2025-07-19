@@ -100,7 +100,7 @@ print(torch.cuda.is_available())
 sudo nano /etc/systemd/system/i365.service
 
 [Unit]
-Description=Gunicorn instance to serve myproject
+Description=Gunicorn instance to serve i365 RAG API
 After=network.target
 
 [Service]
@@ -108,6 +108,15 @@ User=ubuntu
 Group=www-data
 WorkingDirectory=/home/ubuntu/git/i365-rag-api
 Environment="PATH=/home/ubuntu/git/i365-rag-api/.venv/bin"
+RuntimeDirectory=i365
+ExecStart=/home/ubuntu/git/i365-rag-api/.venv/bin/gunicorn --workers 1 --bind unix:/run/i365/i365.sock -k uvicorn.workers.UvicornWorker webapi.main:app
+
+# Command to send SIGHUP to Gunicorn for a graceful reload
+ExecReload=/bin/kill -s HUP $MAINPID
+
+[Install]
+WantedBy=multi-user.target
+
 
 
 # This line tells systemd to create the /run/i365 directory
@@ -154,6 +163,42 @@ sudo ufw allow 'Nginx Full'
 **If there are code changes**
 To reload ,
 sudo systemctl reload i365
+
+# Reload systemd to read the new ExecReload directive
+sudo systemctl daemon-reload
+
+# Restart the service to apply the new configuration
+sudo systemctl restart i365
+
+sudo systemctl reload i365
+sudo systemctl status i365
+
+
+When to Reload Gunicorn vs. When to Reload Nginx
+This is a crucial distinction to understand for smooth deployments:
+
+1. Reload Gunicorn
+You only need to reload Gunicorn when you make changes to your Python application.
+
+Use sudo systemctl reload i365 when:
+
+You have pushed new Python code for your application (e.g., your FastAPI, Django, or Flask files).
+You have changed a dependency in your virtual environment and re-installed packages.
+2. Reload Nginx
+You only need to reload Nginx when you change its own configuration files. Gunicorn changes do not require an Nginx reload.
+
+Use sudo systemctl reload nginx when:
+
+You have edited an Nginx configuration file (e.g., /etc/nginx/sites-available/myproject or /etc/nginx/nginx.conf).
+You have added or renewed an SSL certificate (e.g., with Certbot).
+Before reloading Nginx, it's always a good idea to test the configuration first:
+
+bash
+sudo nginx -t
+
+
+
+
 
 
 TO check ollama is using cuda or not
