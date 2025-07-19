@@ -1,0 +1,35 @@
+# requirements.txt
+
+# --- PyTorch for NVIDIA GPU (CUDA 12.1) ---
+# Use --extra-index-url to add PyTorch's repo without replacing the default PyPI.
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch
+torchvision
+torchaudio
+tesseract-ocr-eng
+
+# --- Core LangChain & Vector DB ---
+# langchain-community now includes many integrations like Ollama, HuggingFace, and Qdrant.
+langchain-community
+langchain-core
+qdrant-client
+sentence-transformers # For embeddings
+
+# --- LLM Clients ---
+ollama # The standalone client for Ollama
+
+# --- Document Processing ---
+# unstructured[pdf] will pull in necessary components.
+unstructured[pdf]
+marker-pdf
+Pillow
+
+# --- Web Server ---
+fastapi
+uvicorn[standard]
+gunicorn
+
+# --- Utilities ---
+pydantic
+pydantic-settings
+

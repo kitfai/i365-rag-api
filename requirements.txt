@@ -1,4 +1,11 @@
-# D:/Codes/pdf-rag/requirements.txt
+# requirements.txt
+
+# --- PyTorch for NVIDIA GPU (CUDA 12.1) ---
+# The --index-url points pip to PyTorch's special repository for GPU-enabled packages.
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch
+torchvision
+torchaudio
 
 # Core LLM and framework libraries
 langchain-community
@@ -7,7 +14,7 @@ ollama
 langchain-qdrant # <-- Add for Qdrant integration
 qdrant-client    # <-- Add the Qdrant client
 sentence-transformers
-
+pydantic-settings
 # PDF Parsing Libraries
 unstructured[pdf]
 marker-pdf
@@ -19,3 +26,4 @@ pydantic
 fastapi
 langchain_ollama
 langchain_huggingface
+tesseract-ocr-eng

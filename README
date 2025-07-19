@@ -1,1 +1,134 @@
+**To use QRANT Docker**
 docker run -p 6333:6333 -p 6334:6334 -v "${PWD}/qdrant_storage:/qdrant/storage" qdrant/qdrant
+
+**To use QDRANT as a service**
+wget https://github.com/qdrant/qdrant/releases/download/v1.14.0/qdrant_1.14.0-1_amd64.deb
+sudo dpkg -i qdrant_1.14.0-1_amd64.deb
+
+sudo nano /etc/systemd/system/qdrant.service
+Content of qdrant.service
+
+
+[Unit]
+Description=Qdrant Vector Search Engine
+After=network.target
+
+[Service]
+User=qdrant
+Group=qdrant
+WorkingDirectory=/var/lib/qdrant
+# The qdrant binary will automatically find the config file at /etc/qdrant/config.yaml
+ExecStart=/usr/bin/qdrant --config-path /etc/qdrant/config.yaml
+Restart=always
+RestartSec=5s
+# Set resource limits. Recommended for production.
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+
+
+sudo useradd --system --user-group --shell /bin/false qdrant
+
+# Create the data directory if it doesn't already exist
+sudo mkdir -p /var/lib/qdrant
+
+# Set the correct ownership for the data and config directories
+sudo chown -R qdrant:qdrant /var/lib/qdrant
+sudo chown -R qdrant:qdrant /etc/qdrant
+
+
+sudo chmod -R u=rwX,g=rX,o=rX /etc/qdrant
+
+sudo systemctl daemon-reload
+
+sudo systemctl enable qdrant
+
+sudo systemctl start qdrant
+
+
+sudo systemctl restart qdrant
+
+systemctl status qdrant
+show see
+● qdrant.service - Qdrant Vector Search Engine
+     Loaded: loaded (/etc/systemd/system/qdrant.service; enabled; preset: enabled)
+     Active: active (running) since Sat 2025-07-19 08:35:01 UTC; 5s ago
+   Main PID: 132950 (qdrant)
+      Tasks: 10 (limit: 4595)
+     Memory: 25.3M
+        CPU: 134ms
+     CGroup: /system.slice/qdrant.service
+             └─132950 /usr/bin/qdrant
+
+
+To check issue on qdrant:
+sudo journalctl -u qdrant -f
+
+
+
+**Code**
+sudo apt-get update && sudo apt-get install -y poppler-utils
+
+**To Test Cuda**
+import torch
+
+
+print(torch.cuda.is_available())
+~
+
+
+sudo nano /etc/systemd/system/i365.service
+
+[Unit]
+Description=Gunicorn instance to serve myproject
+After=network.target
+
+[Service]
+User=ubuntu
+Group=www-data
+WorkingDirectory=/home/ubuntu/git/i365-rag-api
+Environment="PATH=/home/ubuntu/git/i365-rag-api/.venv/bin"
+
+
+# This line tells systemd to create the /run/i365 directory
+RuntimeDirectory=i365
+
+ExecStart=/home/ubuntu/git/i365-rag-api/.venv/bin/gunicorn --workers 1 --bind unix:/run/i365/i365.sock -k uvicorn.workers.UvicornWorker webapi.main:app
+
+[Install]
+WantedBy=multi-user.targety
+
+
+systemctl daemon-reload
+
+sudo systemctl start i365
+sudo systemctl enable i365
+
+
+sudo apt install nginx -y
+
+sudo nano /etc/nginx/sites-available/i365
+
+
+server {
+    listen 80;
+    server_name 172.16.10.7;
+
+    location / {
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_pass http://unix:/run/i365/i365.sock;
+    }
+}
+
+sudo ln -s /etc/nginx/sites-available/i365 /etc/nginx/sites-enabled
+
+sudo nginx -t
+
+sudo systemctl restart nginx
+
+sudo ufw allow 'Nginx Full'
+
