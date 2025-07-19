@@ -186,10 +186,6 @@ class QdrantRAGService:
         ---
         **Output Format:**
 
-        <scratchpad>
-        *Use this space to think step-by-step. Outline your plan for finding the answer. Identify the key entities and data points you need to find. This section will not be shown in the final output.*
-        </scratchpad>
-
         ## Summary Answer
         *Provide a concise, direct answer to the user's question based on your findings.*
 
