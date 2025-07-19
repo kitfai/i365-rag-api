@@ -11,7 +11,7 @@ torchaudio
 langchain-community
 langchain-core
 ollama
-langchain-qdrant # <-- Add for Qdrant integration
+#langchain-qdrant # <-- Add for Qdrant integration
 qdrant-client    # <-- Add the Qdrant client
 sentence-transformers
 pydantic-settings
@@ -24,6 +24,5 @@ uvicorn[standard]
 gunicorn
 pydantic
 fastapi
-langchain_ollama
-langchain_huggingface
-tesseract-ocr-eng
+#langchain_ollama
+#langchain_huggingface

@@ -88,7 +88,7 @@ sudo journalctl -u qdrant -f
 
 **Code**
 sudo apt-get update && sudo apt-get install -y poppler-utils
-
+sudo apt-get install tesseract-ocr-eng
 **To Test Cuda**
 import torch
 
