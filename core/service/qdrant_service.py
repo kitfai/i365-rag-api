@@ -248,18 +248,19 @@ class QdrantRAGService:
 
 
         # --- MODIFICATION: Parse the raw answer before returning it ---
-        raw_answer = result.get("answer", "No answer could be generated.")
-        clean_answer = self._parse_llm_output(raw_answer)
-        '''
+        #raw_answer = result.get("answer", "No answer could be generated.")
+        #clean_answer = self._parse_llm_output(raw_answer)
+        '''return {
+                   "answer": clean_answer,
+                   "context": result.get("context", [])
+        }'''
+
         return {
             "answer": result.get("answer", "No answer could be generated."),
             "context": result.get("context", [])
         }
-        '''
-        return {
-            "answer": clean_answer,
-            "context": result.get("context", [])
-        }
+
+
 
     async def _classify_document_type(self, content: str) -> DocType:
         valid_types = ", ".join([t for t in DocType.__args__ if t != "Unknown"])
