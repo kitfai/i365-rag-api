@@ -149,6 +149,14 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_pass http://unix:/run/i365/i365.sock;
+
+
+        # --- Increase these timeout values ---
+        # Default is 60s. Increase to 3 minutes (180s) or more for slow tasks.
+        proxy_connect_timeout 180s;
+        proxy_send_timeout    180s;
+        proxy_read_timeout    180s;
+        send_timeout          180s;
     }
 }
 
@@ -222,3 +230,17 @@ Jul 19 15:31:48 infra365-poc-aid-02-akhmw ollama[116959]: llama_context: graph n
 Jul 19 15:31:48 infra365-poc-aid-02-akhmw ollama[116959]: llama_context: graph splits = 2
 Jul 19 15:31:48 infra365-poc-aid-02-akhmw ollama[116959]: time=2025-07-19T15:31:48.990Z level=INFO source=server.go:637 msg="llama runner started in 3.26 seconds"
 Jul 19 15:31:48 infra365-poc-aid-02-akhmw ollama[116959]: [GIN] 2025/07/19 - 15:31:48 | 200 |  4.187647165s |       127.0.0.1 | POST     "/api/generate"
+
+scale ollama
+
+sudo systemctl edit ollama.service
+
+add:
+[Service]
+Environment="OLLAMA_KEEP_ALIVE=-1"
+Environment="OLLAMA_NUM_PARALLEL=2"
+
+This tells Ollama to keep the last used model in memory indefinitely.
+The deepseek-r1:latest model is quite large. For a T4, especially with parallel requests, using a smaller or more heavily quantized version (like a Q4_K_M or Q5_K_M) will significantly reduce VRAM usage, prevent swapping, and improve response times.
+Enable Parallel Processing with num_parallelThis directly addresses the sequential request problem. You can configure Ollama to handle multiple requests in parallel, but be very mindful of your T4's VRAM.
+Add the OLLAMA_NUM_PARALLEL environment variable. A value of 2 or 3 is a reasonable starting point for a T4 GPU. Each parallel request will consume its own share of VRAM.
