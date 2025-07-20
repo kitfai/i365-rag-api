@@ -125,7 +125,7 @@ RuntimeDirectory=i365
 ExecStart=/home/ubuntu/git/i365-rag-api/.venv/bin/gunicorn --workers 1 --bind unix:/run/i365/i365.sock -k uvicorn.workers.UvicornWorker webapi.main:app
 
 [Install]
-WantedBy=multi-user.targety
+WantedBy=multi-user.target
 
 
 systemctl daemon-reload
@@ -240,7 +240,19 @@ add:
 Environment="OLLAMA_KEEP_ALIVE=-1"
 Environment="OLLAMA_NUM_PARALLEL=2"
 
+sudo systemctl daemon-reload
+sudo systemctl restart ollama
+
+
 This tells Ollama to keep the last used model in memory indefinitely.
 The deepseek-r1:latest model is quite large. For a T4, especially with parallel requests, using a smaller or more heavily quantized version (like a Q4_K_M or Q5_K_M) will significantly reduce VRAM usage, prevent swapping, and improve response times.
 Enable Parallel Processing with num_parallelThis directly addresses the sequential request problem. You can configure Ollama to handle multiple requests in parallel, but be very mindful of your T4's VRAM.
 Add the OLLAMA_NUM_PARALLEL environment variable. A value of 2 or 3 is a reasonable starting point for a T4 GPU. Each parallel request will consume its own share of VRAM.
+
+nvidia-smi -l 1
+
+Monitor Real-Time VRAM UsageThis is the definitive test. You need to watch your GPU's VRAM usage as Ollama loads and runs the model. The standard tool for this is nvidia-smi.Open a terminal and run this command to get a live-updating view of your GPU status:
+This command will refresh every second. Now, in another terminal, make a request to your RAG API that uses the deepseek-r1 model.What to look for in the nvidia-smi output:•Memory-Usage: This shows Used VRAM / Total VRAM. For your T4, the total will be around 16384MiB.•GPU-Util: This shows how busy the GPU's processing cores are.When you make the request, you will see the VRAM usage spike as Ollama loads the model. If the Memory-Usage gets very close to 16GB, you are at risk of performance issues or out-of-memory errors. If it comfortably sits below ~14-15GB, you are in a good spot.
+
+journalctl -u ollama -f
+Check the Ollama LogsAs you've noted in your README, the Ollama logs are a great source of information. When the model loads, it will often print details about VRAM allocation.Shell Scriptjournalctl -u ollama -fLook for lines like total VRAM: ... loading model to VRAM to confirm it's using the GPU and see how much memory it's trying to allocate.
