@@ -284,46 +284,39 @@ class QdrantRAGService:
         # Fallback in case the model doesn't follow the format perfectly
         logging.warning("Could not find '## Summary Answer' delimiter in LLM output. Returning raw answer.")
         return raw_answer.strip()
+    # D:/infra365/codes/rag-git/core/service/qdrant_service.py
 
     async def query(self, question: str, doc_type: Optional[str] = None) -> dict:
         """
-        Performs a query using the constructed RAG chain.
+        Performs a query using a dynamically constructed RAG chain to allow
+        for filtering and improved accuracy.
         """
         if not question:
             return {"answer": "Please provide a question.", "context": []}
 
-        # The doc_type filter is not used in this simplified chain, but we keep the parameter for future enhancements.
         logging.info(f"Service querying with: '{question}'")
-        start_time = time.time()
-        # 1. Define search parameters. We'll retrieve more documents now.
-        search_kwargs = {'k': 10}  # Increase K to get more context
 
-        # 2. If a document type is provided, add a metadata filter.
-        #    This is a very powerful way to improve accuracy.
+        # 1. Define search parameters.
+        search_kwargs = {'k': 10}
+
+        # 2. If a document type is provided, build a valid Qdrant filter.
         if doc_type and doc_type in DocType.__args__ and doc_type != "Unknown":
             logging.info(f"Applying metadata filter for doc_type: '{doc_type}'")
-            search_kwargs['filter'] = {'doc_type': doc_type}
+            # --- FIX: Construct a valid Filter object ---
+            search_kwargs['filter'] = models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="metadata.doc_type",  # Target the field within metadata
+                        match=models.MatchValue(value=doc_type),
+                    )
+                ]
+            )
 
         # 3. Create a retriever for this specific query with our new settings.
         retriever = self.vectorstore.as_retriever(
             search_type="similarity",
             search_kwargs=search_kwargs
         )
-
-        # Invoke the complete RAG chain with just the user's input
-        #result = await self.rag_chain.ainvoke({"input": question})
-
-        #end_time = time.time()
-        #logging.info(f"RAG chain invocation took {end_time - start_time:.2f} seconds.")
-
-
-        # --- MODIFICATION: Parse the raw answer before returning it ---
-        #raw_answer = result.get("answer", "No answer could be generated.")
-        #clean_answer = self._parse_llm_output(raw_answer)
-        '''return {
-                   "answer": clean_answer,
-                   "context": result.get("context", [])
-        }'''
 
         # 4. Create the full retrieval chain for this query.
         retrieval_chain = create_retrieval_chain(retriever, self.question_answer_chain)
@@ -334,18 +327,14 @@ class QdrantRAGService:
         end_time = time.time()
         logging.info(f"RAG chain invocation took {end_time - start_time:.2f} seconds.")
 
-        # The rest of your parsing logic can remain
+        # 6. Parse the raw answer to present a clean output.
         raw_answer = result.get("answer", "No answer could be generated.")
         clean_answer = self._parse_llm_output(raw_answer)
+
         return {
             "answer": clean_answer,
             "context": result.get("context", [])
         }
-
-        '''return {
-            "answer": result.get("answer", "No answer could be generated."),
-            "context": result.get("context", [])
-        }'''
 
 
 
