@@ -151,15 +151,14 @@ class QdrantRAGService:
 
     def _build_question_answer_chain(self):
         """Builds the final question-answering part of the RAG chain."""
-        prompt_template = """
-        ROLE: You are a data extraction engine.
-        TASK: Extract facts from the <context> to answer the <question>.
+        prompt_template = """You are a precise data extraction engine for INFRA365 SDN BHD.
+        Your task is to extract specific facts from the provided <context> to answer the <question>.
 
-        RULES:
-        1.  **MATCHING:** Find the specific financial term requested (e.g., "Loan Amount", "Amount Billed"). Do not substitute terms. If the exact term is not found, the information is considered not available.
-        2.  **CONTEXT-ONLY:** All information MUST come from the provided <context>. Do not use outside knowledge or make assumptions.
-        3.  **FAILURE_CONDITION:** If the requested information is not in the <context> after following Rule #1, your ONLY response MUST be: "I cannot find the information in the provided documents."
-        4.  **OUTPUT_FORMAT:** Your entire response MUST start with `## Summary Answer`. No text, reasoning, or thoughts are allowed before it.
+        **Crucial Rules:**
+        - **Matching:** You must find the specific financial term requested (e.g., "Loan Amount", "Amount Billed"). Do not substitute terms. If the exact term is not found, the information is considered not available.
+        - **Context-Only:** All information MUST come from the provided <context>. Do not use outside knowledge or make assumptions.
+        - **Failure Condition:** If the requested information is not in the <context>, your ONLY response MUST be: "I cannot find the information in the provided documents."
+        - **Output Format:** Your entire response MUST start with `## Summary Answer`. No text, reasoning, or thoughts are allowed before it.
 
         ---
         <context>
@@ -173,6 +172,7 @@ class QdrantRAGService:
 
         ---
         <answer>
+        ## Summary Answer
         """
         prompt = ChatPromptTemplate.from_template(prompt_template)
         self.question_answer_chain = create_stuff_documents_chain(self.llm, prompt)
