@@ -44,9 +44,10 @@ class RagSettings(BaseSettings):
     EMBEDDING_MODEL_NAME: str = 'BAAI/bge-large-en-v1.5'
 
     # Using a stable, instruction-following model is crucial.
-    LLM_MODEL: str = 'llama3:latest'
+    #LLM_MODEL: str = 'llama3:latest'
+    LLM_MODEL: str = 'deepseek-r1:latest'
     # It's recommended to use the same stable model for classification.
-    LLM_CLASSIFIER_MODEL: str = 'llama3:latest'
+    LLM_CLASSIFIER_MODEL: str = 'deepseek-r1:latest'
 
     LLM_TIMEOUT: int = 360
     LLM_TEMPERATURE: float = 0.0
