@@ -144,7 +144,7 @@ class QdrantRAGService:
             docstore=self.docstore,
             child_splitter=child_splitter,
         )
-        #self.retriever.search_kwargs = {"k": 10}
+        self.retriever.search_kwargs = {"k": 5}
         self._build_question_answer_chain()
 
         self._initialized = True
