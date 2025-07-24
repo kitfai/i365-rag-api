@@ -10,10 +10,8 @@ from typing import Dict, List, Literal, Optional
 
 # --- LangChain & Document Processing ---
 from langchain.storage import LocalFileStore, EncoderBackedStore
-from langchain.text_splitter import RecursiveCharacterTextSplitter, TextSplitter
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document as LangchainDocument
-from langchain_core.runnables import Runnable
-# FINAL FIX: Use modern, non-deprecated components and high-level constructors
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain_core.output_parsers import StrOutputParser
@@ -22,6 +20,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_qdrant import QdrantVectorStore
 from unstructured.partition.auto import partition
+from langchain.retrievers import ParentDocumentRetriever
 
 # --- Qdrant & Configuration ---
 import qdrant_client
@@ -30,8 +29,7 @@ from qdrant_client.http.exceptions import UnexpectedResponse
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # --- Define Document Types ---
-DocType = Literal[
-    "Invoice", "Interest Advice", "Billing", "Unknown"]
+DocType = Literal["Invoice", "Interest Advice", "Billing", "Unknown"]
 
 
 class RagSettings(BaseSettings):
@@ -44,17 +42,15 @@ class RagSettings(BaseSettings):
     QDRANT_PORT: int = 6333
     QDRANT_COLLECTION_NAME: str = "rag_parent_documents"
     EMBEDDING_MODEL_NAME: str = 'BAAI/bge-large-en-v1.5'
-    #LLM_MODEL: str = 'deepseek-r1:latest'
     LLM_MODEL: str = 'deepseek-r1:latest'
     LLM_CLASSIFIER_MODEL: str = 'deepseek-r1:latest'
-    LLM_TRANSFORMER_MODEL: str = 'deepseek-r1:latest'
     LLM_TIMEOUT: int = 360
-    LLM_TEMPERATURE: float = 0.0  # Add this for deterministic output
-    LLM_CONTEXT_WINDOW: int = 4096  # Add this to control input context size
-    LLM_MAX_NEW_TOKENS: int = 2048  # Add this to control max output tokens
-    LLM_MIROSTAT: int = 2  # Add this to enable Mirostat v2 sampling
-    LLM_TOP_K: int = 40  # Add this
-    LLM_TOP_P: float = 0.9  # Add this
+    LLM_TEMPERATURE: float = 0.0
+    LLM_CONTEXT_WINDOW: int = 4096
+    LLM_MAX_NEW_TOKENS: int = 2048
+    LLM_MIROSTAT: int = 2
+    LLM_TOP_K: int = 40
+    LLM_TOP_P: float = 0.9
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 
@@ -76,14 +72,11 @@ logging.getLogger().addHandler(console_handler)
 
 class QdrantRAGService:
     """
-    A high-performance RAG service using a Qdrant server, LLM-based classification,
-    and content-aware chunking. Implemented as a Singleton.
+    A high-performance RAG service using a ParentDocumentRetriever for full-context answers,
+    LLM-based classification, and content-aware chunking. Implemented as a Singleton.
     """
     _instance = None
     _initialized = False
-
-    # Component chain for the RAG pipeline
-    rag_chain: Runnable
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
@@ -95,41 +88,31 @@ class QdrantRAGService:
             return
 
         logging.info("--- Initializing Qdrant RAG Service (Singleton Instance) ---")
-        """
-        temperature=settings.LLM_TEMPERATURE,  # Make the model deterministic
-        num_ctx=settings.LLM_CONTEXT_WINDOW,  # Control the input context window
-        num_predict=settings.LLM_MAX_NEW_TOKENS,  # Limit the max output length
-       stop=["<|endoftext|>", "##"]   ,          # Explicitly define stop sequences)
-       mirostat = settings.LLM_MIROSTAT  ,# Add this line to enable Mirostat
-        top_k=settings.LLM_TOP_K,
-        top_p=settings.LLM_TOP_P
-        )
-        """
 
         self.qdrant_client = qdrant_client.QdrantClient(host=settings.QDRANT_HOST, port=settings.QDRANT_PORT)
-        self.llm = OllamaLLM(model=settings.LLM_MODEL,
-                             timeout=settings.LLM_TIMEOUT,
-                             temperature=settings.LLM_TEMPERATURE,  # Make the model deterministic
-                             num_ctx=settings.LLM_CONTEXT_WINDOW,  # Control the input context window
-                             num_predict=settings.LLM_MAX_NEW_TOKENS,  # Limit the max output length
-                             stop=["<|endoftext|>", "##"],  # Explicitly define stop sequences)
-                             mirostat=settings.LLM_MIROSTAT,  # Add this line to enable Mirostat
-                             top_k=settings.LLM_TOP_K,
-                             top_p=settings.LLM_TOP_P
-                             )
 
+        self.llm = OllamaLLM(
+            model=settings.LLM_MODEL,
+            timeout=settings.LLM_TIMEOUT,
+            temperature=settings.LLM_TEMPERATURE,
+            num_ctx=settings.LLM_CONTEXT_WINDOW,
+            num_predict=settings.LLM_MAX_NEW_TOKENS,
+            stop=["<|endoftext|>", "##"],
+            mirostat=settings.LLM_MIROSTAT,
+            top_k=settings.LLM_TOP_K,
+            top_p=settings.LLM_TOP_P
+        )
 
-        self.classifier_llm = OllamaLLM(model=settings.LLM_CLASSIFIER_MODEL, timeout=30,temperature=0.0)
+        self.classifier_llm = OllamaLLM(
+            model=settings.LLM_CLASSIFIER_MODEL,
+            timeout=30,
+            temperature=0.0
+        )
+
         self.embeddings = HuggingFaceEmbeddings(
             model_name=settings.EMBEDDING_MODEL_NAME,
             model_kwargs={'device': 'cuda' if torch.cuda.is_available() else 'cpu'}
         )
-        self.splitters: Dict[DocType, TextSplitter] = {
-            "Invoice": RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50),
-            "Interest Advice": RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50),
-            "Billing": RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50),
-            "Unknown": RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-        }
 
         self._setup_qdrant_collection(force_rebuild)
 
@@ -138,70 +121,73 @@ class QdrantRAGService:
             collection_name=settings.QDRANT_COLLECTION_NAME,
             embedding=self.embeddings,
         )
+
         self.docstore = EncoderBackedStore(
             LocalFileStore(str(settings.DOCSTORE_PATH)),
             lambda key: key, pickle.dumps, pickle.loads
         )
 
-        #self._build_rag_chain()
+        # This splitter is used to create small, searchable chunks from the parent documents.
+        child_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+
+        self.retriever = ParentDocumentRetriever(
+            vectorstore=self.vectorstore,
+            docstore=self.docstore,
+            child_splitter=child_splitter,
+        )
+
         self._build_question_answer_chain()
 
         self._initialized = True
         logging.info("--- RAG Service is ready for queries. ---")
 
-        # RENAME this method
-
-        # D:/infra365/codes/rag-git/core/service/qdrant_service.py
-
     def _build_question_answer_chain(self):
-            """Builds the question-answering part of the RAG chain."""
-            prompt_template = """You are a specialized data extraction engine for 'INFRA365 SDN BHD'.
-            Your sole purpose is to extract specific facts from the provided <context> to answer the user's <question>.
+        """Builds the final question-answering part of the RAG chain."""
+        prompt_template = """You are a specialized data extraction engine for 'INFRA365 SDN BHD'.
+Your sole purpose is to extract specific facts from the provided <context> to answer the user's <question>.
 
-            **Your Process:**
-            1.  **Analyze the Question:** First, understand the user's specific intent. Identify the key entities (e.g., names, projects) and the specific financial data point they are asking for (e.g., "amount billed to date", "selling price").
-            2.  **Scan the Context:** Search the context for all key entities to locate the relevant document sections. Within those sections, search for the specific financial data point. The text in the context might have slightly different formatting or line breaks (e.g., "Amount Billed\nTo Date"), so be prepared to match the concept.
-            3.  **Extract Verbatim:** Once you find the data, extract the value exactly as it appears.
+**Your Process:**
+1.  **Analyze the Question:** First, understand the user's specific intent. Identify the key entities (e.g., names, projects) and the specific financial data point they are asking for (e.g., "amount billed to date", "selling price").
+2.  **Scan the Context:** Search the context for all key entities to locate the relevant document sections. Within those sections, search for the specific financial data point. The text in the context might have slightly different formatting or line breaks (e.g., "Amount Billed\nTo Date"), so be prepared to match the concept.
+3.  **Extract Verbatim:** Once you find the data, extract the value exactly as it appears.
 
-            **Crucial Rules:**
-            -   **Financial Data Precision:** Be extremely precise with financial terms. "Selling Price", "Loan Amount", and "Amount Billed To Date" are different concepts. You must find the data point that semantically matches the user's request. Do not substitute "Selling Price" if the user asks for "Amount Billed".
-            -   **NEVER** invent or assume information not explicitly present in the <context>.
-            -   If the context does not contain the necessary information to answer the question, you MUST respond with ONLY the following sentence: "I cannot find the information in the provided documents."
-            -   Your entire response MUST strictly follow the format defined in the **"Output Format"** section.
+**Crucial Rules:**
+-   **Financial Data Precision:** Be extremely precise with financial terms. "Selling Price", "Loan Amount", and "Amount Billed To Date" are different concepts. You must find the data point that semantically matches the user's request. Do not substitute "Selling Price" if the user asks for "Amount Billed".
+-   **NEVER** invent or assume information not explicitly present in the <context>.
+-   If the context does not contain the necessary information to answer the question, you MUST respond with ONLY the following sentence: "I cannot find the information in the provided documents."
+-   Your entire response MUST strictly follow the format defined in the **"Output Format"** section.
 
-            ---
-            <context>
-            {context}
-            </context>
-            ---
+---
+<context>
+{context}
+</context>
+---
 
-            **Question:**
-            {input}
+**Question:**
+{input}
 
-            ---
-            **Output Format:**
+---
+**Output Format:**
 
-            <scratchpad>
-            *Use this space to think step-by-step. Outline your plan for finding the answer. Identify the key entities and data points you need to find. This section will not be shown in the final output.*
-            </scratchpad>
+<scratchpad>
+*Use this space to think step-by-step. Outline your plan for finding the answer. Identify the key entities and data points you need to find. This section will not be shown in the final output.*
+</scratchpad>
 
-            ## Summary Answer
-            *Provide a concise, direct answer to the user's question based on your findings.*
+## Summary Answer
+*Provide a concise, direct answer to the user's question based on your findings.*
 
-            ## Detailed Breakdown
-            *List every single piece of evidence you used to construct the summary answer. For each monetary amount, specify which document it came from.*
-            -   Fact 1 from Source X
-            -   Fact 2 from Source Y
+## Detailed Breakdown
+*List every single piece of evidence you used to construct the summary answer. For each monetary amount, specify which document it came from.*
+-   Fact 1 from Source X
+-   Fact 2 from Source Y
 
-            ## Source Documents
-            *List the unique source documents you used to find the answer. List out the original file name used as reference*
-            -   `source_document_1.pdf`
-            -   `source_document_2.pdf`
-            """
-            prompt = ChatPromptTemplate.from_template(prompt_template)
-
-            # This chain is reusable and can be created once.
-            self.question_answer_chain = create_stuff_documents_chain(self.llm, prompt)
+## Source Documents
+*List the unique source documents you used to find the answer. List out the original file name used as reference*
+-   `source_document_1.pdf`
+-   `source_document_2.pdf`
+"""
+        prompt = ChatPromptTemplate.from_template(prompt_template)
+        self.question_answer_chain = create_stuff_documents_chain(self.llm, prompt)
 
     def _setup_qdrant_collection(self, force_rebuild: bool):
         collection_exists = False
@@ -215,9 +201,9 @@ class QdrantRAGService:
                 raise e
         except Exception as e:
             raise e
+
         if force_rebuild or not collection_exists:
             logging.info(f"Recreating Qdrant collection: {settings.QDRANT_COLLECTION_NAME}")
-            # This is a robust way to get the embedding dimension
             vector_size = len(self.embeddings.embed_query("test"))
             self.qdrant_client.recreate_collection(
                 collection_name=settings.QDRANT_COLLECTION_NAME,
@@ -229,145 +215,58 @@ class QdrantRAGService:
                 field_schema=models.PayloadSchemaType.KEYWORD,
             )
 
+    def _parse_llm_output(self, raw_answer: str) -> str:
+        """
+        Parses the raw output from the LLM to remove the <scratchpad> block,
+        returning only the user-facing answer.
+        """
+        if "## Summary Answer" in raw_answer:
+            clean_part = raw_answer.split("## Summary Answer", 1)[1]
+            return "## Summary Answer" + clean_part.strip()
+        logging.warning("Could not find '## Summary Answer' delimiter in LLM output. Returning raw answer.")
+        return raw_answer.strip()
+
+    async def query(self, question: str, doc_type: Optional[str] = None) -> dict:
+        """
+        Performs a query using the ParentDocumentRetriever for full context.
+        """
+        if not question:
+            return {"answer": "Please provide a question.", "context": []}
+
+        logging.info(f"Service querying with: '{question}'")
+        query_start_time = time.time()
+
+        # Note: The standard ParentDocumentRetriever doesn't directly support metadata filtering
+        # during the initial vector search. It retrieves based on vector similarity first, then
+        # fetches the parent documents. For strict filtering, a custom retriever would be needed.
+        if doc_type and doc_type != "Unknown":
+            logging.warning(f"Note: doc_type filter '{doc_type}' is not directly applied with ParentDocumentRetriever.")
+
+        retrieval_chain = create_retrieval_chain(self.retriever, self.question_answer_chain)
+
+        logging.info("Invoking RAG chain with ParentDocumentRetriever...")
+        invocation_start_time = time.time()
+        result = await retrieval_chain.ainvoke({"input": question})
+        invocation_end_time = time.time()
+        logging.info(f" -> RAG chain invocation took {invocation_end_time - invocation_start_time:.2f} seconds.")
+
+        raw_answer = result.get("answer", "No answer could be generated.")
+        logging.info(f"Raw response from LLM:\n---\n{raw_answer}\n---")
+        clean_answer = self._parse_llm_output(raw_answer)
+
+        query_end_time = time.time()
+        logging.info(f"Total query processing time: {query_end_time - query_start_time:.2f} seconds.")
+
+        return {
+            "answer": clean_answer,
+            "context": result.get("context", [])
+        }
+
     async def process_new_documents(self):
         """Public method to run the async document processing task."""
         logging.info("Starting document ingestion process...")
         await self._process_and_upload_documents()
         logging.info("--- Document ingestion has finished. ---")
-
-    def _build_rag_chain(self):
-        """Builds the RAG chain using modern, high-level LangChain constructors."""
-
-        # 1. Define the retriever
-        # This retriever will automatically use the vectorstore to find relevant documents.
-        retriever = self.vectorstore.as_retriever()
-
-        # 2. Define the prompt template for the final answer generation (stuff chain)
-        prompt_template = """You are a specialized data extraction engine for 'INFRA365 SDN BHD'.
-        Your sole purpose is to extract specific facts from the provided <context> to answer the user's <question>.
-
-        **Your Process:**
-        1.  **Analyze the Question:** First, understand what specific pieces of information the user is asking for.
-        2.  **Scan the Context:** Systematically scan the entire <context> for the key entities (e.g., names like "LIEW CHIN GUAN", document types like "Interest Advice") and data points (e.g., monetary amounts, dates) mentioned in the question.
-        3.  **Extract Verbatim:** Extract the relevant facts exactly as they appear in the documents. Do not interpret or summarize them at this stage.
-        4.  **Synthesize the Answer:** Combine the extracted facts into a coherent answer, following the format below.
-
-        **Crucial Rules:**
-        -   **NEVER** invent or assume information not explicitly present in the <context>.
-        -   If the context does not contain the necessary information to answer the question, you MUST respond with ONLY the following sentence: "I cannot find the information in the provided documents."
-        -   Your entire response MUST strictly follow the format defined in the **"Output Format"** section.
-
-        ---
-        <context>
-        {context}
-        </context>
-        ---
-
-        **Question:**
-        {input}
-
-        ---
-        **Output Format:**
-
-        <scratchpad>
-        *Use this space to think step-by-step. Outline your plan for finding the answer. Identify the key entities and data points you need to find. This section will not be shown in the final output.*
-        </scratchpad>
-
-        ## Summary Answer
-        *Provide a concise, direct answer to the user's question based on your findings.*
-
-        ## Detailed Breakdown
-        *List every single piece of evidence you used to construct the summary answer. For each monetary amount, specify which document it came from.*
-        -   Fact 1 from Source X
-        -   Fact 2 from Source Y
-
-        ## Source Documents
-        *List the unique source documents you used to find the answer. List out the original file name used as reference*
-        -   `source_document_1.pdf`
-        -   `source_document_2.pdf`
-        """
-        prompt = ChatPromptTemplate.from_template(prompt_template)
-
-        # 3. Create the "stuff" chain for answering the question
-        # This chain takes a question and a list of documents and "stuffs" them into the prompt.
-        question_answer_chain = create_stuff_documents_chain(self.llm, prompt)
-
-        # 4. Create the final retrieval chain
-        # This chain takes a user question, retrieves documents, and then passes them to the question_answer_chain.
-        self.rag_chain = create_retrieval_chain(retriever, question_answer_chain)
-
-    def _parse_llm_output(self, raw_answer: str) -> str:
-        """
-        Parses the raw output from the LLM to remove the <think> block and other
-        internal thoughts, returning only the user-facing answer.
-        """
-        # The "## Summary Answer" is a reliable delimiter to find the start of the real answer.
-        if "## Summary Answer" in raw_answer:
-            # We split the string at the delimiter and prepend it to the result
-            # to keep the header in the final output.
-            clean_part = raw_answer.split("## Summary Answer", 1)[1]
-            return "## Summary Answer" + clean_part.strip()
-
-        # Fallback in case the model doesn't follow the format perfectly
-        logging.warning("Could not find '## Summary Answer' delimiter in LLM output. Returning raw answer.")
-        return raw_answer.strip()
-    # D:/infra365/codes/rag-git/core/service/qdrant_service.py
-
-        # D:/infra365/codes/rag-git/core/service/qdrant_service.py
-
-    async def query(self, question: str, doc_type: Optional[str] = None) -> dict:
-            """
-            Performs a query using a dynamically constructed RAG chain to allow
-            for filtering and improved accuracy.
-            """
-            if not question:
-                return {"answer": "Please provide a question.", "context": []}
-
-            logging.info(f"Service querying with: '{question}'")
-            query_start_time = time.time()
-
-            # ... (search_kwargs and filter setup remains the same) ...
-            search_kwargs = {'k': 10}
-            if doc_type and doc_type in DocType.__args__ and doc_type != "Unknown":
-                logging.info(f"Applying metadata filter for doc_type: '{doc_type}'")
-                search_kwargs['filter'] = models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="metadata.doc_type",
-                            match=models.MatchValue(value=doc_type),
-                        )
-                    ]
-                )
-
-            retriever = self.vectorstore.as_retriever(
-                search_type="similarity",
-                search_kwargs=search_kwargs
-            )
-            retrieval_chain = create_retrieval_chain(retriever, self.question_answer_chain)
-
-            # --- ENHANCED LOGGING ---
-            logging.info("Invoking RAG chain...")
-            invocation_start_time = time.time()
-
-            result = await retrieval_chain.ainvoke({"input": question})
-
-            invocation_end_time = time.time()
-            logging.info(f" -> RAG chain invocation took {invocation_end_time - invocation_start_time:.2f} seconds.")
-
-            raw_answer = result.get("answer", "No answer could be generated.")
-
-            # --- ADDED LOGGING FOR LLM RESPONSE ---
-            logging.info(f"Raw response from LLM:\n---\n{raw_answer}\n---")
-            clean_answer = self._parse_llm_output(raw_answer)
-
-            query_end_time = time.time()
-            logging.info(f"Total query processing time: {query_end_time - query_start_time:.2f} seconds.")
-
-            return {
-                "answer": clean_answer,
-                "context": result.get("context", [])
-            }
-
 
     async def _classify_document_type(self, content: str) -> DocType:
         valid_types = ", ".join([t for t in DocType.__args__ if t != "Unknown"])
@@ -421,16 +320,16 @@ class QdrantRAGService:
         logging.info(f"  -> Markdown content received for {pdf_file.name}. Classifying document type...")
         try:
             doc_type = await self._classify_document_type(markdown_content)
-            logging.info(f"  -> Classified {pdf_file.name} as type: {doc_type}. Now splitting and storing.")
-            doc_id = pdf_file.name.replace(" ", "_")
+            logging.info(f"  -> Classified {pdf_file.name} as type: {doc_type}. Now adding to retriever.")
+
             parent_doc = LangchainDocument(
                 page_content=markdown_content,
-                metadata={"source": str(pdf_file), "doc_id": doc_id, "doc_type": doc_type}
+                metadata={"source": str(pdf_file), "doc_type": doc_type}
             )
-            splitter = self.splitters[doc_type]
-            child_docs = splitter.split_documents([parent_doc])
-            await self.vectorstore.aadd_documents(child_docs, ids=None)
-            await self.docstore.amset([(doc_id, parent_doc)])
+
+            # This single method handles splitting, embedding, and storing both parent and child docs.
+            await self.retriever.aadd_documents([parent_doc], ids=None)
+
             logging.info(f"  -> DONE: Successfully processed and stored {pdf_file.name}.")
             return pdf_file.name
         except Exception as e:
@@ -450,6 +349,7 @@ class QdrantRAGService:
             logging.warning(
                 " -> Could not retrieve indexed files, assuming none. This is normal if the collection is new.")
             indexed_files = set()
+
         logging.info("Step 2/3: Discovering PDF files in the source directory...")
         all_pdf_files = list(settings.PDFS_PATH.glob("*.pdf"))
         logging.info(f" -> Found {len(all_pdf_files)} total PDF files.")
@@ -457,6 +357,7 @@ class QdrantRAGService:
         if not pdfs_to_process:
             logging.info(" -> All documents are already processed and up to date.")
             return
+
         logging.info(f" -> Found {len(pdfs_to_process)} new documents to process.")
         logging.info("Step 3/3: Processing new documents in parallel...")
         tasks = [self._process_single_pdf(pdf_file, indexed_files) for pdf_file in pdfs_to_process]
