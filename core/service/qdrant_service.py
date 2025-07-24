@@ -47,7 +47,7 @@ class RagSettings(BaseSettings):
     LLM_MODEL: str = 'deepseek-r1:latest'
     LLM_CLASSIFIER_MODEL: str = 'deepseek-r1:latest'
     LLM_TRANSFORMER_MODEL: str = 'deepseek-r1:latest'
-    LLM_TIMEOUT: int = 120
+    LLM_TIMEOUT: int = 360
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 
