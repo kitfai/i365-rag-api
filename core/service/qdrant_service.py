@@ -115,10 +115,23 @@ class QdrantRAGService:
             lambda key: key, pickle.dumps, pickle.loads
         )
 
-        self._build_rag_chain()
+        #self._build_rag_chain()
+        self._build_question_answer_chain()
 
         self._initialized = True
         logging.info("--- RAG Service is ready for queries. ---")
+
+        # RENAME this method
+
+    def _build_question_answer_chain(self):
+        """Builds the question-answering part of the RAG chain."""
+        prompt_template = """You are a specialized data extraction engine for 'INFRA365 SDN BHD'.
+           # ... (your excellent, detailed prompt remains the same) ...
+           """
+        prompt = ChatPromptTemplate.from_template(prompt_template)
+
+        # This chain is reusable and can be created once.
+        self.question_answer_chain = create_stuff_documents_chain(self.llm, prompt)
 
     def _setup_qdrant_collection(self, force_rebuild: bool):
         collection_exists = False
@@ -239,12 +252,26 @@ class QdrantRAGService:
         # The doc_type filter is not used in this simplified chain, but we keep the parameter for future enhancements.
         logging.info(f"Service querying with: '{question}'")
         start_time = time.time()
+        # 1. Define search parameters. We'll retrieve more documents now.
+        search_kwargs = {'k': 10}  # Increase K to get more context
+
+        # 2. If a document type is provided, add a metadata filter.
+        #    This is a very powerful way to improve accuracy.
+        if doc_type and doc_type in DocType.__args__ and doc_type != "Unknown":
+            logging.info(f"Applying metadata filter for doc_type: '{doc_type}'")
+            search_kwargs['filter'] = {'doc_type': doc_type}
+
+        # 3. Create a retriever for this specific query with our new settings.
+        retriever = self.vectorstore.as_retriever(
+            search_type="similarity",
+            search_kwargs=search_kwargs
+        )
 
         # Invoke the complete RAG chain with just the user's input
-        result = await self.rag_chain.ainvoke({"input": question})
+        #result = await self.rag_chain.ainvoke({"input": question})
 
-        end_time = time.time()
-        logging.info(f"RAG chain invocation took {end_time - start_time:.2f} seconds.")
+        #end_time = time.time()
+        #logging.info(f"RAG chain invocation took {end_time - start_time:.2f} seconds.")
 
 
         # --- MODIFICATION: Parse the raw answer before returning it ---
@@ -255,10 +282,27 @@ class QdrantRAGService:
                    "context": result.get("context", [])
         }'''
 
+        # 4. Create the full retrieval chain for this query.
+        retrieval_chain = create_retrieval_chain(retriever, self.question_answer_chain)
+
+        # 5. Invoke the chain.
+        start_time = time.time()
+        result = await retrieval_chain.ainvoke({"input": question})
+        end_time = time.time()
+        logging.info(f"RAG chain invocation took {end_time - start_time:.2f} seconds.")
+
+        # The rest of your parsing logic can remain
+        raw_answer = result.get("answer", "No answer could be generated.")
+        clean_answer = self._parse_llm_output(raw_answer)
         return {
-            "answer": result.get("answer", "No answer could be generated."),
+            "answer": clean_answer,
             "context": result.get("context", [])
         }
+
+        '''return {
+            "answer": result.get("answer", "No answer could be generated."),
+            "context": result.get("context", [])
+        }'''
 
 
 
