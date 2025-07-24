@@ -42,7 +42,7 @@ class RagSettings(BaseSettings):
     QDRANT_PORT: int = 6333
     QDRANT_COLLECTION_NAME: str = "rag_parent_documents"
     EMBEDDING_MODEL_NAME: str = 'BAAI/bge-large-en-v1.5'
-    LLM_MODEL: str = 'deepseek-r1:latest'
+    LLM_MODEL: str = 'llama3:latest'
     LLM_CLASSIFIER_MODEL: str = 'deepseek-r1:latest'
     LLM_TIMEOUT: int = 360
     LLM_TEMPERATURE: float = 0.0
@@ -284,6 +284,13 @@ class QdrantRAGService:
                 output_format="markdown"
             )
             markdown_content = "\n\n".join([el.text for el in elements])
+
+            # --- ADD THIS LOGGING STEP ---
+            # This will print the full extracted text to your log file for verification.
+            # Use DEBUG level to avoid cluttering logs during normal operation.
+            logging.debug(f"--- Extracted Markdown for {pdf_path.name} ---\n{markdown_content}\n--- End Markdown ---")
+            # --
+
             logging.info(f" -> Successfully extracted markdown from {pdf_path.name}")
             return markdown_content if markdown_content.strip() else None
         except Exception as e:
