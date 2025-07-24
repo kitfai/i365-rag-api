@@ -44,8 +44,8 @@ class RagSettings(BaseSettings):
     EMBEDDING_MODEL_NAME: str = 'BAAI/bge-large-en-v1.5'
 
     # Using a stable, instruction-following model is crucial.
-    #LLM_MODEL: str = 'llama3:latest'
-    LLM_MODEL: str = 'deepseek-r1:latest'
+    LLM_MODEL: str = 'llama3:latest'
+    #LLM_MODEL: str = 'deepseek-r1:latest'
     # It's recommended to use the same stable model for classification.
     LLM_CLASSIFIER_MODEL: str = 'deepseek-r1:latest'
 
@@ -144,7 +144,7 @@ class QdrantRAGService:
             docstore=self.docstore,
             child_splitter=child_splitter,
         )
-        self.retriever.search_kwargs = {"k": 5}
+        #self.retriever.search_kwargs = {"k": 5}
         self._build_question_answer_chain()
 
         self._initialized = True
