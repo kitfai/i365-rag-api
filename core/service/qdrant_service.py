@@ -42,8 +42,12 @@ class RagSettings(BaseSettings):
     QDRANT_PORT: int = 6333
     QDRANT_COLLECTION_NAME: str = "rag_parent_documents"
     EMBEDDING_MODEL_NAME: str = 'BAAI/bge-large-en-v1.5'
+
+    # Using a stable, instruction-following model is crucial.
     LLM_MODEL: str = 'llama3:latest'
-    LLM_CLASSIFIER_MODEL: str = 'deepseek-r1:latest'
+    # It's recommended to use the same stable model for classification.
+    LLM_CLASSIFIER_MODEL: str = 'llama3:latest'
+
     LLM_TIMEOUT: int = 360
     LLM_TEMPERATURE: float = 0.0
     LLM_CONTEXT_WINDOW: int = 4096
@@ -57,14 +61,16 @@ class RagSettings(BaseSettings):
 settings = RagSettings()
 
 # --- Setup Logging ---
+# Set level to DEBUG to see the full extracted text from PDFs in the log file.
+# In production, you would set this to logging.INFO.
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s',
     filename=settings.LOG_FILE_PATH,
     filemode='a'
 )
 console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
+console_handler.setLevel(logging.INFO)  # Keep console output clean
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 console_handler.setFormatter(formatter)
 logging.getLogger().addHandler(console_handler)
@@ -97,7 +103,8 @@ class QdrantRAGService:
             temperature=settings.LLM_TEMPERATURE,
             num_ctx=settings.LLM_CONTEXT_WINDOW,
             num_predict=settings.LLM_MAX_NEW_TOKENS,
-            stop=["<|endoftext|>", "##"],
+            # Add model-specific stop tokens for better generation control.
+            stop=["<|endoftext|>", "##", "<|eot_id|>"],
             mirostat=settings.LLM_MIROSTAT,
             top_k=settings.LLM_TOP_K,
             top_p=settings.LLM_TOP_P
@@ -130,6 +137,7 @@ class QdrantRAGService:
         # This splitter is used to create small, searchable chunks from the parent documents.
         child_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
 
+        # The ParentDocumentRetriever is the core of our advanced RAG strategy.
         self.retriever = ParentDocumentRetriever(
             vectorstore=self.vectorstore,
             docstore=self.docstore,
@@ -197,12 +205,14 @@ class QdrantRAGService:
 
     def _parse_llm_output(self, raw_answer: str) -> str:
         """
-        Parses the raw output from the LLM to remove the <scratchpad> block,
-        returning only the user-facing answer.
+        Parses the raw output from the LLM, returning only the user-facing answer.
         """
         if "## Summary Answer" in raw_answer:
+            # This handles the expected, correct output
             clean_part = raw_answer.split("## Summary Answer", 1)[1]
             return "## Summary Answer" + clean_part.strip()
+
+        # This is a fallback for when the model fails to follow the format
         logging.warning("Could not find '## Summary Answer' delimiter in LLM output. Returning raw answer.")
         return raw_answer.strip()
 
@@ -237,9 +247,15 @@ class QdrantRAGService:
         query_end_time = time.time()
         logging.info(f"Total query processing time: {query_end_time - query_start_time:.2f} seconds.")
 
+        # Format the source documents for a cleaner final API response
+        source_docs_formatted = [
+            {"source": doc.metadata.get("source"), "page_content": doc.page_content}
+            for doc in result.get("context", [])
+        ]
+
         return {
             "answer": clean_answer,
-            "context": result.get("context", [])
+            "source_documents": source_docs_formatted
         }
 
     async def process_new_documents(self):
@@ -263,11 +279,16 @@ class QdrantRAGService:
         chain = prompt | self.classifier_llm | StrOutputParser()
         response_text = await chain.ainvoke({"text_sample": content[:2000]})
 
+        # Clean up the response for more reliable matching
+        cleaned_response = response_text.lower().strip()
+
         for doc_type_option in DocType.__args__:
-            if doc_type_option.lower() == response_text.lower():
+            if doc_type_option.lower() == cleaned_response:
                 return doc_type_option
+
+        # Fallback for cases where the model might be slightly verbose
         for doc_type_option in DocType.__args__:
-            if doc_type_option.lower() in response_text.lower():
+            if doc_type_option.lower() in cleaned_response:
                 logging.warning(
                     f"Classification result '{response_text}' was not an exact match. Using fuzzy match: '{doc_type_option}'")
                 return doc_type_option
@@ -285,11 +306,8 @@ class QdrantRAGService:
             )
             markdown_content = "\n\n".join([el.text for el in elements])
 
-            # --- ADD THIS LOGGING STEP ---
             # This will print the full extracted text to your log file for verification.
-            # Use DEBUG level to avoid cluttering logs during normal operation.
             logging.debug(f"--- Extracted Markdown for {pdf_path.name} ---\n{markdown_content}\n--- End Markdown ---")
-            # --
 
             logging.info(f" -> Successfully extracted markdown from {pdf_path.name}")
             return markdown_content if markdown_content.strip() else None
@@ -326,11 +344,14 @@ class QdrantRAGService:
     async def _process_and_upload_documents(self):
         logging.info("Step 1/3: Checking for already indexed files in Qdrant...")
         try:
+            # A small optimization to only fetch the metadata field we need, not the vectors.
             points, _ = self.qdrant_client.scroll(
                 collection_name=settings.QDRANT_COLLECTION_NAME,
-                limit=10000, with_payload=["metadata.source"]
+                limit=10000, with_payload=["metadata.source"], with_vectors=False
             )
-            indexed_files = {Path(p.payload['metadata']['source']).name for p in points if p.payload}
+            # Safer way to build the set of indexed files
+            indexed_files = {Path(p.payload['metadata']['source']).name for p in points if
+                             p.payload and 'source' in p.payload.get('metadata', {})}
             logging.info(f" -> Found {len(indexed_files)} already indexed files.")
         except Exception:
             logging.warning(
