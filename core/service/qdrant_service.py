@@ -151,28 +151,48 @@ class QdrantRAGService:
 
     def _build_question_answer_chain(self):
         """Builds the final question-answering part of the RAG chain."""
-        prompt_template = """You are a precise data extraction engine for INFRA365 SDN BHD.
-        Your task is to extract specific facts from the provided <context> to answer the <question>.
+        prompt_template = """You are a specialized data extraction engine for 'INFRA365 SDN BHD'.
+        Your sole purpose is to extract specific facts from the provided <context> to answer the user's <question>.
+
+        **Your Process:**
+        1.  **Analyze the Question:** First, understand what specific pieces of information the user is asking for.
+        2.  **Scan the Context:** Systematically scan the entire <context> for the key entities (e.g., names like "LIEW CHIN GUAN", document types like "Interest Advice") and data points (e.g., monetary amounts, dates) mentioned in the question.
+        3.  **Extract Verbatim:** Extract the relevant facts exactly as they appear in the documents. Do not interpret or summarize them at this stage.
+        4.  **Synthesize the Answer:** Combine the extracted facts into a coherent answer, following the format below.
 
         **Crucial Rules:**
-        - **Matching:** You must find the specific financial term requested (e.g., "Loan Amount", "Amount Billed"). Do not substitute terms. If the exact term is not found, the information is considered not available.
-        - **Context-Only:** All information MUST come from the provided <context>. Do not use outside knowledge or make assumptions.
-        - **Failure Condition:** If the requested information is not in the <context>, your ONLY response MUST be: "I cannot find the information in the provided documents."
-        - **Output Format:** Your entire response MUST start with `## Summary Answer`. No text, reasoning, or thoughts are allowed before it.
+        -   **NEVER** invent or assume information not explicitly present in the <context>.
+        -   If the context does not contain the necessary information to answer the question, you MUST respond with ONLY the following sentence: "I cannot find the information in the provided documents."
+        -   Your entire response MUST strictly follow the format defined in the **"Output Format"** section.
 
         ---
         <context>
         {context}
         </context>
-
         ---
-        <question>
+
+        **Question:**
         {input}
-        </question>
 
         ---
-        <answer>
+        **Output Format:**
+
+        <scratchpad>
+        *Use this space to think step-by-step. Outline your plan for finding the answer. Identify the key entities and data points you need to find. This section will not be shown in the final output.*
+        </scratchpad>
+
         ## Summary Answer
+        *Provide a concise, direct answer to the user's question based on your findings.*
+
+        ## Detailed Breakdown
+        *List every single piece of evidence you used to construct the summary answer. For each monetary amount, specify which document it came from.*
+        -   Fact 1 from Source X
+        -   Fact 2 from Source Y
+
+        ## Source Documents
+        *List the unique source documents you used to find the answer. List out the original file name used as reference*
+        -   `source_document_1.pdf`
+        -   `source_document_2.pdf`
         """
         prompt = ChatPromptTemplate.from_template(prompt_template)
         self.question_answer_chain = create_stuff_documents_chain(self.llm, prompt)
