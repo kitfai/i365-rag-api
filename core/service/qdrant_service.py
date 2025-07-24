@@ -51,6 +51,7 @@ class RagSettings(BaseSettings):
     LLM_TEMPERATURE: float = 0.0  # Add this for deterministic output
     LLM_CONTEXT_WINDOW: int = 4096  # Add this to control input context size
     LLM_MAX_NEW_TOKENS: int = 2048  # Add this to control max output tokens
+    LLM_MIROSTAT: int = 2  # Add this to enable Mirostat v2 sampling
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 
@@ -98,7 +99,8 @@ class QdrantRAGService:
                              temperature=settings.LLM_TEMPERATURE,  # Make the model deterministic
                              num_ctx=settings.LLM_CONTEXT_WINDOW,  # Control the input context window
                              num_predict=settings.LLM_MAX_NEW_TOKENS,  # Limit the max output length
-                            stop=["<|endoftext|>", "##"]             # Explicitly define stop sequences)
+                            stop=["<|endoftext|>", "##"]   ,          # Explicitly define stop sequences)
+                            mirostat = settings.LLM_MIROSTAT  # Add this line to enable Mirostat
                              )
         self.classifier_llm = OllamaLLM(model=settings.LLM_CLASSIFIER_MODEL, timeout=30)
         self.embeddings = HuggingFaceEmbeddings(
