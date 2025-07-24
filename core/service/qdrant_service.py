@@ -44,7 +44,8 @@ class RagSettings(BaseSettings):
     QDRANT_PORT: int = 6333
     QDRANT_COLLECTION_NAME: str = "rag_parent_documents"
     EMBEDDING_MODEL_NAME: str = 'BAAI/bge-large-en-v1.5'
-    LLM_MODEL: str = 'deepseek-r1:latest'
+    #LLM_MODEL: str = 'deepseek-r1:latest'
+    LLM_MODEL: str = 'llama3:latest'
     LLM_CLASSIFIER_MODEL: str = 'deepseek-r1:latest'
     LLM_TRANSFORMER_MODEL: str = 'deepseek-r1:latest'
     LLM_TIMEOUT: int = 360
