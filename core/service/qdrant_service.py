@@ -108,9 +108,18 @@ class QdrantRAGService:
 
         self.qdrant_client = qdrant_client.QdrantClient(host=settings.QDRANT_HOST, port=settings.QDRANT_PORT)
         self.llm = OllamaLLM(model=settings.LLM_MODEL,
-                             timeout=settings.LLM_TIMEOUT)
+                             timeout=settings.LLM_TIMEOUT,
+                             temperature=settings.LLM_TEMPERATURE,  # Make the model deterministic
+                             num_ctx=settings.LLM_CONTEXT_WINDOW,  # Control the input context window
+                             num_predict=settings.LLM_MAX_NEW_TOKENS,  # Limit the max output length
+                             stop=["<|endoftext|>", "##"],  # Explicitly define stop sequences)
+                             mirostat=settings.LLM_MIROSTAT,  # Add this line to enable Mirostat
+                             top_k=settings.LLM_TOP_K,
+                             top_p=settings.LLM_TOP_P
+                             )
 
-        self.classifier_llm = OllamaLLM(model=settings.LLM_CLASSIFIER_MODEL, timeout=30)
+
+        self.classifier_llm = OllamaLLM(model=settings.LLM_CLASSIFIER_MODEL, timeout=30,temperature=0.0)
         self.embeddings = HuggingFaceEmbeddings(
             model_name=settings.EMBEDDING_MODEL_NAME,
             model_kwargs={'device': 'cuda' if torch.cuda.is_available() else 'cpu'}
