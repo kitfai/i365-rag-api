@@ -241,7 +241,7 @@ class QdrantRAGService:
         **Your Process:**
         1.  **Analyze the Question:** First, understand what specific pieces of information the user is asking for.
         2.  **Scan the Context:** Systematically scan the entire <context> for the key entities (e.g., names like "LIEW CHIN GUAN", document types like "Interest Advice") and data points (e.g., monetary amounts, dates) mentioned in the question.
-        3.  **Extract Verbatim:** Extract the relevant facts exactly as they appear in the documents. Try to understand and interpret the question asked to better understand what is required.
+        3.  **Extract Verbatim:** Extract the relevant facts exactly as they appear in the documents. Do not interpret or summarize them at this stage.
         4.  **Synthesize the Answer:** Combine the extracted facts into a coherent answer, following the format below.
 
         **Crucial Rules:**
