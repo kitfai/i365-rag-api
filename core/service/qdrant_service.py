@@ -52,6 +52,8 @@ class RagSettings(BaseSettings):
     LLM_CONTEXT_WINDOW: int = 4096  # Add this to control input context size
     LLM_MAX_NEW_TOKENS: int = 2048  # Add this to control max output tokens
     LLM_MIROSTAT: int = 2  # Add this to enable Mirostat v2 sampling
+    LLM_TOP_K: int = 40  # Add this
+    LLM_TOP_P: float = 0.9  # Add this
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 
@@ -100,7 +102,9 @@ class QdrantRAGService:
                              num_ctx=settings.LLM_CONTEXT_WINDOW,  # Control the input context window
                              num_predict=settings.LLM_MAX_NEW_TOKENS,  # Limit the max output length
                             stop=["<|endoftext|>", "##"]   ,          # Explicitly define stop sequences)
-                            mirostat = settings.LLM_MIROSTAT  # Add this line to enable Mirostat
+                            mirostat = settings.LLM_MIROSTAT  ,# Add this line to enable Mirostat
+                             top_k=settings.LLM_TOP_K,
+                             top_p=settings.LLM_TOP_P
                              )
         self.classifier_llm = OllamaLLM(model=settings.LLM_CLASSIFIER_MODEL, timeout=30)
         self.embeddings = HuggingFaceEmbeddings(
@@ -339,6 +343,9 @@ class QdrantRAGService:
             logging.info(f" -> RAG chain invocation took {invocation_end_time - invocation_start_time:.2f} seconds.")
 
             raw_answer = result.get("answer", "No answer could be generated.")
+
+            # --- ADDED LOGGING FOR LLM RESPONSE ---
+            logging.info(f"Raw response from LLM:\n---\n{raw_answer}\n---")
             clean_answer = self._parse_llm_output(raw_answer)
 
             query_end_time = time.time()
