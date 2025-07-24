@@ -48,6 +48,9 @@ class RagSettings(BaseSettings):
     LLM_CLASSIFIER_MODEL: str = 'deepseek-r1:latest'
     LLM_TRANSFORMER_MODEL: str = 'deepseek-r1:latest'
     LLM_TIMEOUT: int = 360
+    LLM_TEMPERATURE: float = 0.0  # Add this for deterministic output
+    LLM_CONTEXT_WINDOW: int = 4096  # Add this to control input context size
+    LLM_MAX_NEW_TOKENS: int = 2048  # Add this to control max output tokens
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 
@@ -90,7 +93,13 @@ class QdrantRAGService:
         logging.info("--- Initializing Qdrant RAG Service (Singleton Instance) ---")
 
         self.qdrant_client = qdrant_client.QdrantClient(host=settings.QDRANT_HOST, port=settings.QDRANT_PORT)
-        self.llm = OllamaLLM(model=settings.LLM_MODEL, timeout=settings.LLM_TIMEOUT)
+        self.llm = OllamaLLM(model=settings.LLM_MODEL,
+                             timeout=settings.LLM_TIMEOUT,
+                             temperature=settings.LLM_TEMPERATURE,  # Make the model deterministic
+                             num_ctx=settings.LLM_CONTEXT_WINDOW,  # Control the input context window
+                             num_predict=settings.LLM_MAX_NEW_TOKENS,  # Limit the max output length
+                            stop=["<|endoftext|>", "##"]             # Explicitly define stop sequences)
+                             )
         self.classifier_llm = OllamaLLM(model=settings.LLM_CLASSIFIER_MODEL, timeout=30)
         self.embeddings = HuggingFaceEmbeddings(
             model_name=settings.EMBEDDING_MODEL_NAME,
