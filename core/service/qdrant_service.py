@@ -286,60 +286,57 @@ class QdrantRAGService:
         return raw_answer.strip()
     # D:/infra365/codes/rag-git/core/service/qdrant_service.py
 
+        # D:/infra365/codes/rag-git/core/service/qdrant_service.py
+
     async def query(self, question: str, doc_type: Optional[str] = None) -> dict:
-        """
-        Performs a query using a dynamically constructed RAG chain to allow
-        for filtering and improved accuracy.
-        """
-        if not question:
-            return {"answer": "Please provide a question.", "context": []}
+            """
+            Performs a query using a dynamically constructed RAG chain to allow
+            for filtering and improved accuracy.
+            """
+            if not question:
+                return {"answer": "Please provide a question.", "context": []}
 
-        logging.info(f"Service querying with: '{question}'")
+            logging.info(f"Service querying with: '{question}'")
+            query_start_time = time.time()
 
-        # 1. Define search parameters.
-        search_kwargs = {'k': 10}
+            # ... (search_kwargs and filter setup remains the same) ...
+            search_kwargs = {'k': 10}
+            if doc_type and doc_type in DocType.__args__ and doc_type != "Unknown":
+                logging.info(f"Applying metadata filter for doc_type: '{doc_type}'")
+                search_kwargs['filter'] = models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="metadata.doc_type",
+                            match=models.MatchValue(value=doc_type),
+                        )
+                    ]
+                )
 
-        # 2. If a document type is provided, build a valid Qdrant filter.
-        if doc_type and doc_type in DocType.__args__ and doc_type != "Unknown":
-            logging.info(f"Applying metadata filter for doc_type: '{doc_type}'")
-            # --- FIX: Construct a valid Filter object ---
-            search_kwargs['filter'] = models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="metadata.doc_type",  # Target the field within metadata
-                        match=models.MatchValue(value=doc_type),
-                    )
-                ]
+            retriever = self.vectorstore.as_retriever(
+                search_type="similarity",
+                search_kwargs=search_kwargs
             )
+            retrieval_chain = create_retrieval_chain(retriever, self.question_answer_chain)
 
-        # 3. Create a retriever for this specific query with our new settings.
-        retriever = self.vectorstore.as_retriever(
-            search_type="similarity",
-            search_kwargs=search_kwargs
-        )
+            # --- ENHANCED LOGGING ---
+            logging.info("Invoking RAG chain...")
+            invocation_start_time = time.time()
 
-        # 4. Create the full retrieval chain for this query.
-        retrieval_chain = create_retrieval_chain(retriever, self.question_answer_chain)
+            result = await retrieval_chain.ainvoke({"input": question})
 
-        # 5. Invoke the chain.
-        start_time = time.time()
-        result = await retrieval_chain.ainvoke({"input": question})
-        end_time = time.time()
-        logging.info(f"RAG chain invocation took {end_time - start_time:.2f} seconds.")
+            invocation_end_time = time.time()
+            logging.info(f" -> RAG chain invocation took {invocation_end_time - invocation_start_time:.2f} seconds.")
 
-        # 6. Parse the raw answer to present a clean output.
-        raw_answer = result.get("answer", "No answer could be generated.")
-        clean_answer = self._parse_llm_output(raw_answer)
-        '''
-        return {
-            "answer": clean_answer,
-            "context": result.get("context", [])
-        }'''
-        return {
-            "answer": raw_answer,
-            "context": result.get("context", [])
-        }
+            raw_answer = result.get("answer", "No answer could be generated.")
+            clean_answer = self._parse_llm_output(raw_answer)
 
+            query_end_time = time.time()
+            logging.info(f"Total query processing time: {query_end_time - query_start_time:.2f} seconds.")
+
+            return {
+                "answer": clean_answer,
+                "context": result.get("context", [])
+            }
 
 
     async def _classify_document_type(self, content: str) -> DocType:
