@@ -330,9 +330,13 @@ class QdrantRAGService:
         # 6. Parse the raw answer to present a clean output.
         raw_answer = result.get("answer", "No answer could be generated.")
         clean_answer = self._parse_llm_output(raw_answer)
-
+        '''
         return {
             "answer": clean_answer,
+            "context": result.get("context", [])
+        }'''
+        return {
+            "answer": raw_answer,
             "context": result.get("context", [])
         }
 
