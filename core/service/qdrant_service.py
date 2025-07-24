@@ -125,7 +125,7 @@ class QdrantRAGService:
 
         # D:/infra365/codes/rag-git/core/service/qdrant_service.py
 
-        def _build_question_answer_chain(self):
+    def _build_question_answer_chain(self):
             """Builds the question-answering part of the RAG chain."""
             # --- FIX: Use the detailed and correct prompt template ---
             prompt_template = """You are a specialized data extraction engine for 'INFRA365 SDN BHD'.
