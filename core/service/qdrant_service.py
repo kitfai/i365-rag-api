@@ -146,45 +146,44 @@ class QdrantRAGService:
 
     def _build_question_answer_chain(self):
             """Builds the question-answering part of the RAG chain."""
-            # --- FIX: Use the detailed and correct prompt template ---
             prompt_template = """You are a specialized data extraction engine for 'INFRA365 SDN BHD'.
             Your sole purpose is to extract specific facts from the provided <context> to answer the user's <question>.
-
+    
             **Your Process:**
-            1.  **Analyze the Question:** First, understand what specific pieces of information the user is asking for.
-            2.  **Scan the Context:** Systematically scan the entire <context> for the key entities (e.g., names like "LIEW CHIN GUAN", document types like "Interest Advice") and data points (e.g., monetary amounts, dates) mentioned in the question.
-            3.  **Extract Verbatim:** Extract the relevant facts exactly as they appear in the documents. Do not interpret or summarize them at this stage.
-            4.  **Synthesize the Answer:** Combine the extracted facts into a coherent answer, following the format below.
-
+            1.  **Analyze the Question:** First, understand what specific pieces of information the user is asking for. Pay close attention to exact phrasing like "amount billed to date" versus "selling price".
+            2.  **Scan the Context:** Systematically scan the entire <context> for the key entities (e.g., names, project names) and data points mentioned in the question.
+            3.  **Extract Verbatim:** Extract the relevant facts exactly as they appear in the documents. Prioritize finding text in the context that exactly matches the user's query. Do not interpret or summarize.
+    
             **Crucial Rules:**
+            -   **Financial Data Precision:** Be extremely precise with financial terms. "Selling Price", "Loan Amount", and "Amount Billed To Date" are different concepts. If the user asks for one, do not provide another unless explicitly asked to.
             -   **NEVER** invent or assume information not explicitly present in the <context>.
             -   If the context does not contain the necessary information to answer the question, you MUST respond with ONLY the following sentence: "I cannot find the information in the provided documents."
             -   Your entire response MUST strictly follow the format defined in the **"Output Format"** section.
-
+    
             ---
             <context>
             {context}
             </context>
             ---
-
+    
             **Question:**
             {input}
-
+    
             ---
             **Output Format:**
-
+    
             <scratchpad>
             *Use this space to think step-by-step. Outline your plan for finding the answer. Identify the key entities and data points you need to find. This section will not be shown in the final output.*
             </scratchpad>
-
+    
             ## Summary Answer
             *Provide a concise, direct answer to the user's question based on your findings.*
-
+    
             ## Detailed Breakdown
             *List every single piece of evidence you used to construct the summary answer. For each monetary amount, specify which document it came from.*
             -   Fact 1 from Source X
             -   Fact 2 from Source Y
-
+    
             ## Source Documents
             *List the unique source documents you used to find the answer. List out the original file name used as reference*
             -   `source_document_1.pdf`
