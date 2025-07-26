@@ -21,7 +21,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_qdrant import QdrantVectorStore
 from unstructured.partition.auto import partition
 from langchain.retrievers import ParentDocumentRetriever
-
+from langchain_openai import ChatOpenAI
 # --- Qdrant & Configuration ---
 import qdrant_client
 from qdrant_client.http import models
@@ -44,10 +44,20 @@ class RagSettings(BaseSettings):
     EMBEDDING_MODEL_NAME: str = 'BAAI/bge-large-en-v1.5'
 
     # Using a stable, instruction-following model is crucial.
-    LLM_MODEL: str = 'llama3:latest'
+    #LLM_MODEL: str = 'llama3:latest'
     #LLM_MODEL: str = 'deepseek-r1:latest'
     # It's recommended to use the same stable model for classification.
-    LLM_CLASSIFIER_MODEL: str = 'deepseek-r1:latest'
+    #LLM_CLASSIFIER_MODEL: str = 'deepseek-r1:latest'
+    # --- VLLM Server Configuration ---
+    # The model name as served by your vLLM instance
+    LLM_MODEL: str = "TheBloke/deepseek-coder-1.3B-instruct-AWQ"
+    # The base URL of your OpenAI-compatible vLLM server
+    VLLM_BASE_URL: str = "http://localhost:8000/v1"
+    # An API key is required, but can be a dummy value for local servers
+    VLLM_API_KEY: str = "not-needed"
+    # --- Classifier Model ---
+    # For simplicity, we use the same vLLM endpoint for classification
+    LLM_CLASSIFIER_MODEL: str = "TheBloke/deepseek-coder-1.3B-instruct-AWQ"
 
     LLM_TIMEOUT: int = 360
     LLM_TEMPERATURE: float = 0.0
@@ -97,7 +107,7 @@ class QdrantRAGService:
         logging.info("--- Initializing Qdrant RAG Service (Singleton Instance) ---")
 
         self.qdrant_client = qdrant_client.QdrantClient(host=settings.QDRANT_HOST, port=settings.QDRANT_PORT)
-
+        '''
         self.llm = OllamaLLM(
             model=settings.LLM_MODEL,
             timeout=settings.LLM_TIMEOUT,
@@ -109,6 +119,23 @@ class QdrantRAGService:
             mirostat=settings.LLM_MIROSTAT,
             top_k=settings.LLM_TOP_K,
             top_p=settings.LLM_TOP_P
+        )'''
+        # NEW: Instantiate the ChatOpenAI client to connect to the vLLM server
+        self.llm = ChatOpenAI(
+            model=settings.LLM_MODEL,
+            openai_api_key=settings.VLLM_API_KEY,
+            openai_api_base=settings.VLLM_BASE_URL,
+            temperature=settings.LLM_TEMPERATURE,
+            max_tokens=settings.LLM_MAX_NEW_TOKENS,
+        )
+
+        # Use the same vLLM endpoint for classification for consistency
+        self.classifier_llm = ChatOpenAI(
+            model=settings.LLM_CLASSIFIER_MODEL,
+            openai_api_key=settings.VLLM_API_KEY,
+            openai_api_base=settings.VLLM_BASE_URL,
+            temperature=0.0,
+            max_tokens=50,  # Classification needs very few tokens
         )
 
         self.classifier_llm = OllamaLLM(

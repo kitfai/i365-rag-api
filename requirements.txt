@@ -26,3 +26,4 @@ pydantic
 fastapi
 langchain_ollama
 langchain_huggingface
+langchain-openai
