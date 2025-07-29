@@ -28,6 +28,9 @@ from qdrant_client.http import models
 from qdrant_client.http.exceptions import UnexpectedResponse
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from langchain.retrievers import ContextualCompressionRetriever
+from langchain.retrievers.document_compressors import LLMChainExtractor
+
 # --- Define Document Types ---
 DocType = Literal["Invoice", "Interest Advice", "Billing", "Unknown"]
 
@@ -137,13 +140,13 @@ class QdrantRAGService:
             temperature=0.0,
             max_tokens=50,  # Classification needs very few tokens
         )
-
+        '''
         self.classifier_llm = OllamaLLM(
             model=settings.LLM_CLASSIFIER_MODEL,
             timeout=30,
             temperature=0.0
         )
-
+        '''
         self.embeddings = HuggingFaceEmbeddings(
             model_name=settings.EMBEDDING_MODEL_NAME,
             model_kwargs={'device': 'cuda' if torch.cuda.is_available() else 'cpu'}
@@ -166,10 +169,24 @@ class QdrantRAGService:
         child_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
 
         # The ParentDocumentRetriever is the core of our advanced RAG strategy.
-        self.retriever = ParentDocumentRetriever(
+
+        base_retriever = ParentDocumentRetriever(
             vectorstore=self.vectorstore,
             docstore=self.docstore,
             child_splitter=child_splitter,
+        )
+        base_retriever.search_kwargs = {"k": 5}  # Fetch 5 candidates
+
+
+        # Create a compressor that uses a fast LLM to extract relevant sentences
+        # This is a cheap but effective way to filter noise.
+        compressor = LLMChainExtractor.from_llm(self.llm)
+
+        #Create the final compression retriever
+        # This will first call the base_retriever, then pass the results to the compressor.
+        self.retriever = ContextualCompressionRetriever(
+            base_compressor=compressor,
+            base_retriever=base_retriever
         )
         #self.retriever.search_kwargs = {"k": 5}
         self._build_question_answer_chain()
