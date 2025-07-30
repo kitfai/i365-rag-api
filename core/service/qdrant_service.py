@@ -398,7 +398,7 @@ class QdrantRAGService:
             )
 
             # This single method handles splitting, embedding, and storing both parent and child docs.
-            await self.retriever.aadd_documents([parent_doc], ids=None)
+            await self.retriever.add_documents([parent_doc], ids=None)
 
             logging.info(f"  -> DONE: Successfully processed and stored {pdf_file.name}.")
             return pdf_file.name
