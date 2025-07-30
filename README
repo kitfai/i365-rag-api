@@ -283,7 +283,7 @@ python -m vllm.entrypoints.openai.api_server \
     --served-model-name "deepseek-6.7b" \
     --quantization awq \
     --max-model-len 8192 \
-    --gpu-memory-utilization 0.95 \
+    --gpu-memory-utilization 0.60 \
     --trust-remote-code
 
     to test:
