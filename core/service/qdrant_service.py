@@ -429,7 +429,7 @@ class QdrantRAGService:
             # --- FIX: Call add_documents on the underlying base_retriever ---
             # The ContextualCompressionRetriever is a wrapper; the actual document
             # handling is done by the ParentDocumentRetriever it contains.
-            await self.retriever.base_retriever.add_documents([parent_doc], ids=None)
+            #await self.retriever.base_retriever.add_documents([parent_doc], ids=None)
 
             # --- FIX: Call add_documents on the underlying base_retriever ---
             # The ContextualCompressionRetriever is a wrapper; the actual document
