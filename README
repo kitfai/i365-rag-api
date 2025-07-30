@@ -109,7 +109,9 @@ Group=www-data
 WorkingDirectory=/home/ubuntu/git/i365-rag-api
 Environment="PATH=/home/ubuntu/git/i365-rag-api/.venv/bin"
 RuntimeDirectory=i365
-ExecStart=/home/ubuntu/git/i365-rag-api/.venv/bin/gunicorn --workers 1 --bind unix:/run/i365/i365.sock -k uvicorn.workers.UvicornWorker webapi.main:app
+# The umask=007 option ensures the socket is group-writable, allowing the nginx user (www-data) to connect.
+# This is the fix for the '[Errno 13] Permission denied' error.
+ExecStart=/home/ubuntu/git/i365-rag-api/.venv/bin/gunicorn --workers 1 --bind 'unix:/run/i365/i365.sock?umask=007' -k uvicorn.workers.UvicornWorker webapi.main:app
 
 # Command to send SIGHUP to Gunicorn for a graceful reload
 ExecReload=/bin/kill -s HUP $MAINPID
@@ -148,7 +150,7 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_pass http://unix:/run/i365/i365.sock;
+        proxy_pass http://unix:/run/i365/i365.sock?umask=007;
 
 
         # --- Increase these timeout values ---
@@ -256,3 +258,40 @@ This command will refresh every second. Now, in another terminal, make a request
 
 journalctl -u ollama -f
 Check the Ollama LogsAs you've noted in your README, the Ollama logs are a great source of information. When the model loads, it will often print details about VRAM allocation.Shell Scriptjournalctl -u ollama -fLook for lines like total VRAM: ... loading model to VRAM to confirm it's using the GPU and see how much memory it's trying to allocate.
+
+
+
+
+
+
+***vllm***
+    # Example for CUDA 12.1 - replace with the command for your setup
+    pip install torch --index-url https://download.pytorch.org/whl/cu121
+
+
+    # Uninstall both the main package and its core dependency
+    pip uninstall -y outlines outlines-core
+
+    # Re-install vllm, which will pull in the correct, compatible versions
+    pip install "vllm @ git+https://github.com/vllm-project/vllm.git"
+
+
+# This command starts the vllm server with a 4-bit quantized DeepSeek model
+
+python -m vllm.entrypoints.openai.api_server \
+    --model "TheBloke/deepseek-coder-1.3B-instruct-AWQ" \
+    --quantization awq \
+    --kv-cache-dtype fp8 \
+    --gpu-memory-utilization 0.90 \
+    --trust-remote-code
+
+    to test:
+
+    curl http://localhost:8000/v1/completions \
+    -H "Content-Type: application/json" \
+    -d '{
+        "model": "TheBloke/deepseek-coder-1.3B-instruct-AWQ",
+        "prompt": "def fibonacci(n):",
+        "max_tokens": 100,
+        "temperature": 0
+    }'
