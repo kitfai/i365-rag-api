@@ -286,6 +286,14 @@ python -m vllm.entrypoints.openai.api_server \
     --gpu-memory-utilization 0.60 \
     --trust-remote-code
 
+
+python -m vllm.entrypoints.openai.api_server \
+    --model "casperhansen/Llama-3-8B-Instruct-AWQ" \
+    --served-model-name "llama-3-8b-instruct" \
+    --quantization awq \
+    --max-model-len 8192 \
+    --gpu-memory-utilization 0.60 \
+    --trust-remote-code
     to test:
 
 curl http://localhost:8000/v1/completions \
