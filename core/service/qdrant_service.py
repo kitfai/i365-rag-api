@@ -426,8 +426,10 @@ class QdrantRAGService:
                 metadata={"source": str(pdf_file), "doc_type": doc_type}
             )
 
-            # This single method handles splitting, embedding, and storing both parent and child docs.
-            await self.retriever.add_documents([parent_doc], ids=None)
+            # --- FIX: Call add_documents on the underlying base_retriever ---
+            # The ContextualCompressionRetriever is a wrapper; the actual document
+            # handling is done by the ParentDocumentRetriever it contains.
+            await self.retriever.base_retriever.add_documents([parent_doc], ids=None)
 
             logging.info(f"  -> DONE: Successfully processed and stored {pdf_file.name}.")
             return pdf_file.name
