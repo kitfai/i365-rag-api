@@ -7,6 +7,7 @@ import logging
 import time
 import asyncio
 from typing import Dict, List, Literal, Optional
+import re
 
 # --- LangChain & Document Processing ---
 from langchain.storage import LocalFileStore, EncoderBackedStore
@@ -15,21 +16,19 @@ from langchain_core.documents import Document as LangchainDocument
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain_core.output_parsers import StrOutputParser
-from langchain_ollama import OllamaLLM
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_qdrant import QdrantVectorStore
 from unstructured.partition.auto import partition
 from langchain.retrievers import ParentDocumentRetriever
 from langchain_openai import ChatOpenAI
+
 # --- Qdrant & Configuration ---
 import qdrant_client
 from qdrant_client.http import models
 from qdrant_client.http.exceptions import UnexpectedResponse
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from langchain.retrievers import ContextualCompressionRetriever
-from langchain.retrievers.document_compressors import LLMChainExtractor
 
 # --- Define Document Types ---
 DocType = Literal["Invoice", "Interest Advice", "Billing", "Unknown"]
@@ -46,11 +45,6 @@ class RagSettings(BaseSettings):
     QDRANT_COLLECTION_NAME: str = "rag_parent_documents"
     EMBEDDING_MODEL_NAME: str = 'BAAI/bge-large-en-v1.5'
 
-    # Using a stable, instruction-following model is crucial.
-    #LLM_MODEL: str = 'llama3:latest'
-    #LLM_MODEL: str = 'deepseek-r1:latest'
-    # It's recommended to use the same stable model for classification.
-    #LLM_CLASSIFIER_MODEL: str = 'deepseek-r1:latest'
     # --- VLLM Server Configuration ---
     # The model name as served by your vLLM instance
     LLM_MODEL: str = "TheBloke/deepseek-coder-1.3B-instruct-AWQ"
@@ -110,20 +104,8 @@ class QdrantRAGService:
         logging.info("--- Initializing Qdrant RAG Service (Singleton Instance) ---")
 
         self.qdrant_client = qdrant_client.QdrantClient(host=settings.QDRANT_HOST, port=settings.QDRANT_PORT)
-        '''
-        self.llm = OllamaLLM(
-            model=settings.LLM_MODEL,
-            timeout=settings.LLM_TIMEOUT,
-            temperature=settings.LLM_TEMPERATURE,
-            num_ctx=settings.LLM_CONTEXT_WINDOW,
-            num_predict=settings.LLM_MAX_NEW_TOKENS,
-            # Add model-specific stop tokens for better generation control.
-            stop=["<|endoftext|>", "##", "<|eot_id|>"],
-            mirostat=settings.LLM_MIROSTAT,
-            top_k=settings.LLM_TOP_K,
-            top_p=settings.LLM_TOP_P
-        )'''
-        # NEW: Instantiate the ChatOpenAI client to connect to the vLLM server
+
+        # Instantiate the ChatOpenAI client to connect to the vLLM server
         self.llm = ChatOpenAI(
             model=settings.LLM_MODEL,
             openai_api_key=settings.VLLM_API_KEY,
@@ -140,13 +122,7 @@ class QdrantRAGService:
             temperature=0.0,
             max_tokens=50,  # Classification needs very few tokens
         )
-        '''
-        self.classifier_llm = OllamaLLM(
-            model=settings.LLM_CLASSIFIER_MODEL,
-            timeout=30,
-            temperature=0.0
-        )
-        '''
+
         self.embeddings = HuggingFaceEmbeddings(
             model_name=settings.EMBEDDING_MODEL_NAME,
             model_kwargs={'device': 'cuda' if torch.cuda.is_available() else 'cpu'}
@@ -168,27 +144,16 @@ class QdrantRAGService:
         # This splitter is used to create small, searchable chunks from the parent documents.
         child_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
 
-        # The ParentDocumentRetriever is the core of our advanced RAG strategy.
-
-        base_retriever = ParentDocumentRetriever(
+        # --- Simplified Retriever Setup ---
+        # Use the ParentDocumentRetriever directly for robustness and simplicity.
+        # This removes the extra compression layer which was a likely point of failure.
+        self.retriever = ParentDocumentRetriever(
             vectorstore=self.vectorstore,
             docstore=self.docstore,
             child_splitter=child_splitter,
         )
-        base_retriever.search_kwargs = {"k": 5}  # Fetch 5 candidates
+        self.retriever.search_kwargs = {"k": 5}  # Fetch top 5 candidate documents
 
-
-        # Create a compressor that uses a fast LLM to extract relevant sentences
-        # This is a cheap but effective way to filter noise.
-        compressor = LLMChainExtractor.from_llm(self.llm)
-
-        #Create the final compression retriever
-        # This will first call the base_retriever, then pass the results to the compressor.
-        self.retriever = ContextualCompressionRetriever(
-            base_compressor=compressor,
-            base_retriever=base_retriever
-        )
-        #self.retriever.search_kwargs = {"k": 5}
         self._build_question_answer_chain()
 
         self._initialized = True
@@ -294,13 +259,11 @@ class QdrantRAGService:
         query_start_time = time.time()
 
         # Store original search_kwargs to restore them later, ensuring thread safety.
-        original_search_kwargs = self.retriever.base_retriever.search_kwargs.copy()
+        original_search_kwargs = self.retriever.search_kwargs.copy()
         active_retriever = self.retriever
 
         try:
-            # --- FIX: Dynamically inject the filter into the main retriever ---
-            # This ensures we always use the powerful ParentDocumentRetriever,
-            # providing full, high-quality context to the LLM.
+            # Dynamically inject the filter into the main retriever
             if doc_type and doc_type != "Unknown":
                 logging.info(f"Applying strict doc_type filter: '{doc_type}'.")
 
@@ -314,11 +277,10 @@ class QdrantRAGService:
                     ]
                 )
 
-                # Temporarily add the filter to the search_kwargs of the ParentDocumentRetriever.
-                # This is the key change: we modify the existing retriever instead of creating a new one.
-                active_retriever.base_retriever.search_kwargs["filter"] = qdrant_filter
+                # Temporarily add the filter to the search_kwargs of the retriever.
+                active_retriever.search_kwargs["filter"] = qdrant_filter
             else:
-                logging.info("No doc_type filter applied. Using default compression retriever.")
+                logging.info("No doc_type filter applied. Using default retriever.")
 
             # The rest of the chain is built with the correctly configured retriever.
             retrieval_chain = create_retrieval_chain(active_retriever, self.question_answer_chain)
@@ -332,7 +294,7 @@ class QdrantRAGService:
         finally:
             # IMPORTANT: Restore the original search_kwargs to ensure this query
             # doesn't affect the next one.
-            self.retriever.base_retriever.search_kwargs = original_search_kwargs
+            self.retriever.search_kwargs = original_search_kwargs
 
         raw_answer = result.get("answer", "No answer could be generated.")
         logging.info(f"Raw response from LLM:\n---\n{raw_answer}\n---")
@@ -361,10 +323,11 @@ class QdrantRAGService:
     async def _classify_document_type(self, content: str) -> DocType:
         valid_types = ", ".join([t for t in DocType.__args__ if t != "Unknown"])
         prompt = ChatPromptTemplate.from_template(
-            "You are a document classification expert. Your task is to analyze the text provided and identify its type.\n"
-            "Based on the following text, classify the document into ONE of the following types:\n"
+            "You are an automated document classification system. Your ONLY function is to output a single word from the provided list.\n"
+            "Analyze the text and classify it into ONE of these types:\n"
             f"{valid_types}\n\n"
-            "Respond with ONLY the type name from the list above. If you are unsure or the document does not match any type, respond with 'Unknown'.\n\n"
+            "Your entire response MUST be a single word from that list. DO NOT add any explanation, preamble, or notes.\n"
+            "If you are unsure, respond with the single word 'Unknown'.\n\n"
             "--- Document Text Sample ---\n"
             "{text_sample}\n"
             "--- End of Sample ---\n\n"
@@ -382,7 +345,8 @@ class QdrantRAGService:
 
         # Fallback for cases where the model might be slightly verbose
         for doc_type_option in DocType.__args__:
-            if doc_type_option.lower() in cleaned_response:
+            # Use regex to find the type as a whole word, case-insensitive, for more accuracy
+            if re.search(r'\b' + re.escape(doc_type_option.lower()) + r'\b', cleaned_response):
                 logging.warning(
                     f"Classification result '{response_text}' was not an exact match. Using fuzzy match: '{doc_type_option}'")
                 return doc_type_option
@@ -426,18 +390,10 @@ class QdrantRAGService:
                 metadata={"source": str(pdf_file), "doc_type": doc_type}
             )
 
-            # --- FIX: Call add_documents on the underlying base_retriever ---
-            # The ContextualCompressionRetriever is a wrapper; the actual document
-            # handling is done by the ParentDocumentRetriever it contains.
-            #await self.retriever.base_retriever.add_documents([parent_doc], ids=None)
-
-            # --- FIX: Call add_documents on the underlying base_retriever ---
-            # The ContextualCompressionRetriever is a wrapper; the actual document
-            # handling is done by the ParentDocumentRetriever it contains. The `add_documents`
-            # method is synchronous, so we must run it in a separate thread to avoid
-            # blocking the asyncio event loop.
+            # The `add_documents` method of the ParentDocumentRetriever is synchronous.
+            # We must run it in a separate thread to avoid blocking the asyncio event loop.
             await asyncio.to_thread(
-                self.retriever.base_retriever.add_documents,
+                self.retriever.add_documents,
                 [parent_doc],
                 ids=None
             )
