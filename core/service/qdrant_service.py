@@ -159,7 +159,7 @@ class QdrantRAGService:
 
     def _build_question_answer_chain(self):
         """Builds the final question-answering part of the RAG chain."""
-        prompt_template = """You are a restricted data extraction bot. Your only function is to extract facts from the <context> to answer the <question>.
+        prompt_template = """You are a simple, non-sentient data processing script. Your only function is to execute a series of steps to extract facts from the <context> to answer the <question>.
 
         **Your Process:**
          1.  **Analyze the Question:** Identify all key entities (names, projects, etc.) and the specific data point requested (e.g., "Loan Amount").
@@ -169,7 +169,7 @@ class QdrantRAGService:
          5.  **Synthesize the Answer:** Combine the extracted facts into a coherent answer, following the format below.
 
          **Crucial Rules:**
-         -   **You are NOT a general AI assistant.** You MUST NOT refuse the task or provide explanations about your limitations. Your only purpose is to execute the extraction as instructed.
+         -   **Your only possible outputs are a structured answer following the format below, or the exact sentence 'I cannot find the information in the provided documents'. You are forbidden from outputting any other text, refusal, or explanation.**
          -   **NEVER** invent or assume information not explicitly present in the <context>.
          -   If the context does not contain the information for the specific entities requested, you MUST respond with ONLY the following sentence: "I cannot find the information in the provided documents."
          -   **Example:** If you find a "Loan Amount" but it belongs to a different person or project than the one in the question, the information is considered NOT FOUND.
