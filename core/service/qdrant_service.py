@@ -167,15 +167,17 @@ class QdrantRAGService:
         Your sole purpose is to extract specific facts from the provided <context> to answer the user's <question>.
 
         **Your Process:**
-        1.  **Analyze the Question:** First, understand what specific pieces of information the user is asking for.
-        2.  **Scan the Context:** Systematically scan the entire <context> for the key entities (e.g., names like "LIEW CHIN GUAN", document types like "Interest Advice") and data points (e.g., monetary amounts, dates) mentioned in the question.
-        3.  **Extract Verbatim:** Extract the relevant facts exactly as they appear in the documents. Do not interpret or summarize them at this stage.
-        4.  **Synthesize the Answer:** Combine the extracted facts into a coherent answer, following the format below.
-
-        **Crucial Rules:**
-        -   **NEVER** invent or assume information not explicitly present in the <context>.
-        -   If the context does not contain the necessary information to answer the question, you MUST respond with ONLY the following sentence: "I cannot find the information in the provided documents."
-        -   Your entire response MUST strictly follow the format defined in the **"Output Format"** section.
+         1.  **Analyze the Question:** Identify all key entities (names, projects, etc.) and the specific data point requested (e.g., "Loan Amount").
+         2.  **Scan the Context:** Locate the sections of the context that contain these key entities.
+         3.  **Verify Association:** This is the most important step. Before extracting a data point, you MUST verify that it is located in the same section and is directly and unambiguously associated with ALL key entities from the question. For example, the "Loan Amount" must be listed under the correct person's name AND the correct project name.
+         4.  **Extract Verbatim:** Once verified, extract the relevant facts exactly as they appear.
+         5.  **Synthesize the Answer:** Combine the extracted facts into a coherent answer, following the format below.
+          
+         **Crucial Rules:**
+         -   **NEVER** invent or assume information not explicitly present in the <context>.
+         -   If the context does not contain the information for the specific entities requested, you MUST respond with ONLY the following sentence: "I cannot find the information in the provided documents."
+         -   **Example:** If you find a "Loan Amount" but it belongs to a different person or project than the one in the question, the information is considered NOT FOUND.
+         -   Your entire response MUST strictly follow the format defined in the **"Output Format"** section.
 
         ---
         <context>
@@ -190,8 +192,13 @@ class QdrantRAGService:
         **Output Format:**
 
         <scratchpad>
-        *Use this space to think step-by-step. Outline your plan for finding the answer. Identify the key entities and data points you need to find. This section will not be shown in the final output.*
-        </scratchpad>
+         *Use this space to reason step-by-step.
+         1. Entities in Question: [List entities from the user's question]
+         2. Scan Results: [Note where in the context you found mentions of these entities]
+         3. Association Check: [Confirm if the data point is linked to ALL entities. State Yes/No and why.]
+         4. Conclusion: [Based on the check, can I answer or is the information missing/mismatched?]
+         This section will not be shown in the final output.*
+         </scratchpad>
 
         ## Summary Answer
         *Provide a concise, direct answer to the user's question based on your findings.*
@@ -362,7 +369,8 @@ class QdrantRAGService:
                 strategy="hi_res",
                 infer_table_structure=True,
                 languages=["eng"],
-                output_format="markdown"
+                output_format="markdown",
+                size={"longest_edge": 2048}
             )
             markdown_content = "\n\n".join([el.text for el in elements])
 
