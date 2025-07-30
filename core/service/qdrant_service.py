@@ -431,6 +431,17 @@ class QdrantRAGService:
             # handling is done by the ParentDocumentRetriever it contains.
             await self.retriever.base_retriever.add_documents([parent_doc], ids=None)
 
+            # --- FIX: Call add_documents on the underlying base_retriever ---
+            # The ContextualCompressionRetriever is a wrapper; the actual document
+            # handling is done by the ParentDocumentRetriever it contains. The `add_documents`
+            # method is synchronous, so we must run it in a separate thread to avoid
+            # blocking the asyncio event loop.
+            await asyncio.to_thread(
+                self.retriever.base_retriever.add_documents,
+                [parent_doc],
+                ids=None
+            )
+
             logging.info(f"  -> DONE: Successfully processed and stored {pdf_file.name}.")
             return pdf_file.name
         except Exception as e:
