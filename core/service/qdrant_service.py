@@ -280,10 +280,12 @@ class QdrantRAGService:
         # This is a fallback for when the model fails to follow the format
         logging.warning("Could not find '## Summary Answer' delimiter in LLM output. Returning raw answer.")
         return raw_answer.strip()
+    
 
     async def query(self, question: str, doc_type: Optional[str] = None) -> dict:
         """
-        Performs a query using the ParentDocumentRetriever for full context.
+        Performs a query. If a doc_type is specified, it uses a strict, filter-aware
+        retriever. Otherwise, it uses the default advanced retriever.
         """
         if not question:
             return {"answer": "Please provide a question.", "context": []}
@@ -291,15 +293,35 @@ class QdrantRAGService:
         logging.info(f"Service querying with: '{question}'")
         query_start_time = time.time()
 
-        # Note: The standard ParentDocumentRetriever doesn't directly support metadata filtering
-        # during the initial vector search. It retrieves based on vector similarity first, then
-        # fetches the parent documents. For strict filtering, a custom retriever would be needed.
+        # --- FIX: Implement Dynamic Retriever Selection for Accurate Filtering ---
+        # This is the core of the fix. We choose the right tool for the job based
+        # on whether a specific document type filter is requested.
         if doc_type and doc_type != "Unknown":
-            logging.warning(f"Note: doc_type filter '{doc_type}' is not directly applied with ParentDocumentRetriever.")
+            logging.info(f"Applying strict doc_type filter: '{doc_type}'. Using direct vector search.")
+            # This retriever is built on-the-fly to apply a metadata filter
+            # directly in the Qdrant database, ensuring accuracy.
+            active_retriever = self.vectorstore.as_retriever(
+                search_kwargs={
+                    "k": 5,  # Retrieve top 5 relevant chunks from the filtered set
+                    "filter": models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="metadata.doc_type",
+                                match=models.MatchValue(value=doc_type),
+                            )
+                        ]
+                    )
+                }
+            )
+        else:
+            # If no filter is needed, we use the more complex, pre-configured retriever.
+            logging.info("No doc_type filter applied. Using default compression retriever.")
+            active_retriever = self.retriever
 
-        retrieval_chain = create_retrieval_chain(self.retriever, self.question_answer_chain)
+        # The rest of the chain is built with the appropriate retriever.
+        retrieval_chain = create_retrieval_chain(active_retriever, self.question_answer_chain)
 
-        logging.info("Invoking RAG chain with ParentDocumentRetriever...")
+        logging.info("Invoking RAG chain...")
         invocation_start_time = time.time()
         result = await retrieval_chain.ainvoke({"input": question})
         invocation_end_time = time.time()
