@@ -14,7 +14,6 @@ from langchain.storage import LocalFileStore, EncoderBackedStore
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document as LangchainDocument
 from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.chains.retrieval import create_retrieval_chain
 from langchain_core.output_parsers import StrOutputParser
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.prompts import ChatPromptTemplate
@@ -28,7 +27,6 @@ import qdrant_client
 from qdrant_client.http import models
 from qdrant_client.http.exceptions import UnexpectedResponse
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
 
 # --- Define Document Types ---
 DocType = Literal["Invoice", "Interest Advice", "Billing", "Unknown"]
@@ -54,10 +52,9 @@ class RagSettings(BaseSettings):
     VLLM_API_KEY: str = "not-needed"
     # --- Classifier Model ---
     # For simplicity, we use the same vLLM endpoint for classification
-    # For simplicity, we use the same vLLM endpoint for classification
     LLM_CLASSIFIER_MODEL: str = "deepseek-6.7b"
 
-
+    # --- LLM Generation Parameters ---
     LLM_TIMEOUT: int = 360
     LLM_TEMPERATURE: float = 0.0
     LLM_CONTEXT_WINDOW: int = 4096
@@ -65,6 +62,7 @@ class RagSettings(BaseSettings):
     LLM_MIROSTAT: int = 2
     LLM_TOP_K: int = 40
     LLM_TOP_P: float = 0.9
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 
@@ -146,9 +144,7 @@ class QdrantRAGService:
         # This splitter is used to create small, searchable chunks from the parent documents.
         child_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
 
-        # --- Simplified Retriever Setup ---
         # Use the ParentDocumentRetriever directly for robustness and simplicity.
-        # This removes the extra compression layer which was a likely point of failure.
         self.retriever = ParentDocumentRetriever(
             vectorstore=self.vectorstore,
             docstore=self.docstore,
@@ -172,7 +168,7 @@ class QdrantRAGService:
          3.  **Verify Association:** This is the most important step. Before extracting a data point, you MUST verify that it is located in the same section and is directly and unambiguously associated with ALL key entities from the question. For example, the "Loan Amount" must be listed under the correct person's name AND the correct project name.
          4.  **Extract Verbatim:** Once verified, extract the relevant facts exactly as they appear.
          5.  **Synthesize the Answer:** Combine the extracted facts into a coherent answer, following the format below.
-          
+
          **Crucial Rules:**
          -   **NEVER** invent or assume information not explicitly present in the <context>.
          -   If the context does not contain the information for the specific entities requested, you MUST respond with ONLY the following sentence: "I cannot find the information in the provided documents."
@@ -255,14 +251,13 @@ class QdrantRAGService:
         logging.warning("Could not find '## Summary Answer' delimiter in LLM output. Returning raw answer.")
         return raw_answer.strip()
 
-
     async def query(self, question: str, doc_type: Optional[str] = None) -> dict:
         """
         Performs a query. If a doc_type is specified, it uses a strict, filter-aware
         retriever. Otherwise, it uses the default advanced retriever.
         """
         if not question:
-            return {"answer": "Please provide a question.", "context": []}
+            return {"answer": "Please provide a question.", "source_documents": []}
 
         logging.info(f"Service querying with: '{question}'")
         query_start_time = time.time()
@@ -271,34 +266,46 @@ class QdrantRAGService:
         original_search_kwargs = self.retriever.search_kwargs.copy()
         active_retriever = self.retriever
 
+        result = {}
+        retrieved_docs = []
+
         try:
             # Dynamically inject the filter into the main retriever
             if doc_type and doc_type != "Unknown":
                 logging.info(f"Applying strict doc_type filter: '{doc_type}'.")
-
-                # Create the filter for Qdrant
                 qdrant_filter = models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="metadata.doc_type",
-                            match=models.MatchValue(value=doc_type),
-                        )
-                    ]
+                    must=[models.FieldCondition(key="metadata.doc_type", match=models.MatchValue(value=doc_type))]
                 )
-
-                # Temporarily add the filter to the search_kwargs of the retriever.
                 active_retriever.search_kwargs["filter"] = qdrant_filter
             else:
                 logging.info("No doc_type filter applied. Using default retriever.")
 
-            # The rest of the chain is built with the correctly configured retriever.
-            retrieval_chain = create_retrieval_chain(active_retriever, self.question_answer_chain)
+            # --- World-Class RAG: Separate retrieval from generation for better control ---
+            # Step 1: Retrieve documents from the vector store.
+            logging.info("Step 1: Retrieving relevant documents...")
+            retrieved_docs = await active_retriever.ainvoke(question)
 
-            logging.info("Invoking RAG chain...")
+            # Step 2: Explicitly handle the case where no documents are found.
+            if not retrieved_docs:
+                logging.warning("No relevant documents found by the retriever for the given query and filter.")
+                return {
+                    "answer": "I cannot find the information in the provided documents.",
+                    "source_documents": []
+                }
+
+            # Step 3: If documents are found, invoke the LLM with the context.
+            logging.info(f"Step 2: Found {len(retrieved_docs)} documents. Invoking LLM chain...")
             invocation_start_time = time.time()
-            result = await retrieval_chain.ainvoke({"input": question})
+
+            raw_answer = await self.question_answer_chain.ainvoke({
+                "input": question,
+                "context": retrieved_docs
+            })
+
             invocation_end_time = time.time()
             logging.info(f" -> RAG chain invocation took {invocation_end_time - invocation_start_time:.2f} seconds.")
+
+            result = {"answer": raw_answer, "context": retrieved_docs}
 
         finally:
             # IMPORTANT: Restore the original search_kwargs to ensure this query
@@ -314,7 +321,7 @@ class QdrantRAGService:
 
         # Format the source documents for a cleaner final API response
         source_docs_formatted = [
-            {"source": doc.metadata.get("source"), "page_content": doc.page_content}
+            {"source": Path(doc.metadata.get("source")).name, "page_content": doc.page_content}
             for doc in result.get("context", [])
         ]
 
@@ -359,11 +366,15 @@ class QdrantRAGService:
                 logging.warning(
                     f"Classification result '{response_text}' was not an exact match. Using fuzzy match: '{doc_type_option}'")
                 return doc_type_option
+
+        logging.warning(
+            f"Classifier could not determine a valid type for response: '{response_text}'. Defaulting to 'Unknown'.")
         return "Invoice"
 
     def _process_pdf_to_markdown(self, pdf_path: Path) -> Optional[str]:
         logging.info(f" -> Starting markdown extraction for {pdf_path.name}")
         try:
+            # This resolves the deprecation warning from the unstructured library.
             elements = partition(
                 filename=str(pdf_path),
                 strategy="hi_res",
