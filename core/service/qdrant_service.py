@@ -280,7 +280,7 @@ class QdrantRAGService:
         # This is a fallback for when the model fails to follow the format
         logging.warning("Could not find '## Summary Answer' delimiter in LLM output. Returning raw answer.")
         return raw_answer.strip()
-    
+
 
     async def query(self, question: str, doc_type: Optional[str] = None) -> dict:
         """
@@ -290,60 +290,67 @@ class QdrantRAGService:
         if not question:
             return {"answer": "Please provide a question.", "context": []}
 
-        logging.info(f"Service querying with: '{question}'")
-        query_start_time = time.time()
+        logging.info(f"Service querying with: '{question}'")logging.info(f"Service querying with: '{question}'")
+         query_start_time = time.time()
 
-        # --- FIX: Implement Dynamic Retriever Selection for Accurate Filtering ---
-        # This is the core of the fix. We choose the right tool for the job based
-        # on whether a specific document type filter is requested.
-        if doc_type and doc_type != "Unknown":
-            logging.info(f"Applying strict doc_type filter: '{doc_type}'. Using direct vector search.")
-            # This retriever is built on-the-fly to apply a metadata filter
-            # directly in the Qdrant database, ensuring accuracy.
-            active_retriever = self.vectorstore.as_retriever(
-                search_kwargs={
-                    "k": 5,  # Retrieve top 5 relevant chunks from the filtered set
-                    "filter": models.Filter(
-                        must=[
-                            models.FieldCondition(
-                                key="metadata.doc_type",
-                                match=models.MatchValue(value=doc_type),
-                            )
-                        ]
-                    )
-                }
-            )
-        else:
-            # If no filter is needed, we use the more complex, pre-configured retriever.
-            logging.info("No doc_type filter applied. Using default compression retriever.")
-            active_retriever = self.retriever
+         # Store original search_kwargs to restore them later, ensuring thread safety.
+         original_search_kwargs = self.retriever.base_retriever.search_kwargs.copy()
+         active_retriever = self.retriever
 
-        # The rest of the chain is built with the appropriate retriever.
-        retrieval_chain = create_retrieval_chain(active_retriever, self.question_answer_chain)
+         try:
+             # --- FIX: Dynamically inject the filter into the main retriever ---
+             # This ensures we always use the powerful ParentDocumentRetriever,
+             # providing full, high-quality context to the LLM.
+             if doc_type and doc_type != "Unknown":
+                 logging.info(f"Applying strict doc_type filter: '{doc_type}'.")
 
-        logging.info("Invoking RAG chain...")
-        invocation_start_time = time.time()
-        result = await retrieval_chain.ainvoke({"input": question})
-        invocation_end_time = time.time()
-        logging.info(f" -> RAG chain invocation took {invocation_end_time - invocation_start_time:.2f} seconds.")
+                 # Create the filter for Qdrant
+                 qdrant_filter = models.Filter(
+                     must=[
+                         models.FieldCondition(
+                             key="metadata.doc_type",
+                             match=models.MatchValue(value=doc_type),
+                         )
+                     ]
+                 )
 
-        raw_answer = result.get("answer", "No answer could be generated.")
-        logging.info(f"Raw response from LLM:\n---\n{raw_answer}\n---")
-        clean_answer = self._parse_llm_output(raw_answer)
+                 # Temporarily add the filter to the search_kwargs of the ParentDocumentRetriever.
+                 # This is the key change: we modify the existing retriever instead of creating a new one.
+                 active_retriever.base_retriever.search_kwargs["filter"] = qdrant_filter
+             else:
+                 logging.info("No doc_type filter applied. Using default compression retriever.")
 
-        query_end_time = time.time()
-        logging.info(f"Total query processing time: {query_end_time - query_start_time:.2f} seconds.")
+             # The rest of the chain is built with the correctly configured retriever.
+             retrieval_chain = create_retrieval_chain(active_retriever, self.question_answer_chain)
 
-        # Format the source documents for a cleaner final API response
-        source_docs_formatted = [
-            {"source": doc.metadata.get("source"), "page_content": doc.page_content}
-            for doc in result.get("context", [])
-        ]
+             logging.info("Invoking RAG chain...")
+             invocation_start_time = time.time()
+             result = await retrieval_chain.ainvoke({"input": question})
+             invocation_end_time = time.time()
+             logging.info(f" -> RAG chain invocation took {invocation_end_time - invocation_start_time:.2f} seconds.")
 
-        return {
-            "answer": clean_answer,
-            "source_documents": source_docs_formatted
-        }
+         finally:
+             # IMPORTANT: Restore the original search_kwargs to ensure this query
+             # doesn't affect the next one.
+             self.retriever.base_retriever.search_kwargs = original_search_kwargs
+
+         raw_answer = result.get("answer", "No answer could be generated.")
+         logging.info(f"Raw response from LLM:\n---\n{raw_answer}\n---")
+         clean_answer = self._parse_llm_output(raw_answer)
+
+         query_end_time = time.time()
+         logging.info(f"Total query processing time: {query_end_time - query_start_time:.2f} seconds.")
+
+         # Format the source documents for a cleaner final API response
+         source_docs_formatted = [
+             {"source": doc.metadata.get("source"), "page_content": doc.page_content}
+             for doc in result.get("context", [])
+         ]
+
+         return {
+             "answer": clean_answer,
+             "source_documents": source_docs_formatted
+         }
 
     async def process_new_documents(self):
         """Public method to run the async document processing task."""
