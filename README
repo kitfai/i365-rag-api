@@ -279,18 +279,19 @@ Check the Ollama LogsAs you've noted in your README, the Ollama logs are a great
 # This command starts the vllm server with a 4-bit quantized DeepSeek model
 
 python -m vllm.entrypoints.openai.api_server \
-    --model "TheBloke/deepseek-coder-1.3B-instruct-AWQ" \
+    --model "TheBloke/deepseek-coder-6.7B-Instruct-AWQ" \
+    --served-model-name "deepseek-6.7b" \
     --quantization awq \
-    --kv-cache-dtype fp8 \
-    --gpu-memory-utilization 0.90 \
+    --max-model-len 8192 \
+    --gpu-memory-utilization 0.95 \
     --trust-remote-code
 
     to test:
 
-    curl http://localhost:8000/v1/completions \
+curl http://localhost:8000/v1/completions \
     -H "Content-Type: application/json" \
     -d '{
-        "model": "TheBloke/deepseek-coder-1.3B-instruct-AWQ",
+        "model": "deepseek-6.7b",
         "prompt": "def fibonacci(n):",
         "max_tokens": 100,
         "temperature": 0
