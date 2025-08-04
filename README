@@ -286,6 +286,14 @@ python -m vllm.entrypoints.openai.api_server \
     --gpu-memory-utilization 0.60 \
     --trust-remote-code
 
+python -m vllm.entrypoints.openai.api_server \
+    --model "TheBloke/deepseek-llm-7b-chat-AWQ" \
+    --served-model-name "deepseek-7b-chat" \
+    --quantization awq \
+    --max-model-len 8192 \
+    --gpu-memory-utilization 0.60 \
+    --trust-remote-code
+
 
 python -m vllm.entrypoints.openai.api_server \
     --model "casperhansen/Llama-3-8B-Instruct-AWQ" \
