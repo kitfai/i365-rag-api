@@ -290,6 +290,7 @@ python -m vllm.entrypoints.openai.api_server \
     --model "TheBloke/deepseek-llm-7b-chat-AWQ" \
     --served-model-name "deepseek-7b-chat" \
     --quantization awq \
+    --tensor-parallel-size 2 \
     --max-model-len 8192 \
     --gpu-memory-utilization 0.60 \
     --trust-remote-code
