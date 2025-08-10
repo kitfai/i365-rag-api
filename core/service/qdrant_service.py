@@ -42,6 +42,7 @@ class RagSettings(BaseSettings):
     QDRANT_PORT: int = 6333
     QDRANT_COLLECTION_NAME: str = "rag_parent_documents"
     EMBEDDING_MODEL_NAME: str = 'BAAI/bge-large-en-v1.5'
+    RETRIEVER_TOP_K: int = 3  # New setting, reduced from 5 to 3
 
     # --- VLLM Server Configuration ---
     # The model name as served by your vLLM instance
@@ -58,7 +59,7 @@ class RagSettings(BaseSettings):
     LLM_TIMEOUT: int = 360
     LLM_TEMPERATURE: float = 0.0
     LLM_CONTEXT_WINDOW: int = 4096
-    LLM_MAX_NEW_TOKENS: int = 2048
+    LLM_MAX_NEW_TOKENS: int = 1024
     LLM_MIROSTAT: int = 2
     LLM_TOP_K: int = 40
     LLM_TOP_P: float = 0.9
@@ -150,7 +151,7 @@ class QdrantRAGService:
             docstore=self.docstore,
             child_splitter=child_splitter,
         )
-        self.retriever.search_kwargs = {"k": 5}  # Fetch top 5 candidate documents
+        self.retriever.search_kwargs = {"k": settings.RETRIEVER_TOP_K}  # Fetch top 5 candidate documents
 
         self._build_question_answer_chain()
 
