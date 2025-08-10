@@ -297,9 +297,20 @@ python -m vllm.entrypoints.openai.api_server \
 
 
 python -m vllm.entrypoints.openai.api_server \
+    --model "TheBloke/deepseek-coder-6.7B-instruct-AWQ" \
+    --served-model-name "deepseek-coder-6.7b-instruct" \
+    --quantization awq \
+    --tensor-parallel-size 2 \
+    --max-model-len 8192 \
+    --gpu-memory-utilization 0.60 \
+    --trust-remote-code
+
+
+python -m vllm.entrypoints.openai.api_server \
     --model "casperhansen/Llama-3-8B-Instruct-AWQ" \
     --served-model-name "llama-3-8b-instruct" \
     --quantization awq \
+    --tensor-parallel-size 2 \
     --max-model-len 8192 \
     --gpu-memory-utilization 0.60 \
     --trust-remote-code

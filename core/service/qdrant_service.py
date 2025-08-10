@@ -45,14 +45,14 @@ class RagSettings(BaseSettings):
 
     # --- VLLM Server Configuration ---
     # The model name as served by your vLLM instance
-    LLM_MODEL: str = "deepseek-7b-chat"
+    LLM_MODEL: str = "llama-3-8b-instruct"
     # The base URL of your OpenAI-compatible vLLM server
     VLLM_BASE_URL: str = "http://localhost:8000/v1"
     # An API key is required, but can be a dummy value for local servers
     VLLM_API_KEY: str = "not-needed"
     # --- Classifier Model ---
     # For simplicity, we use the same vLLM endpoint for classification
-    LLM_CLASSIFIER_MODEL: str = "deepseek-7b-chat"
+    LLM_CLASSIFIER_MODEL: str = "llama-3-8b-instruct"
 
     # --- LLM Generation Parameters ---
     LLM_TIMEOUT: int = 360
