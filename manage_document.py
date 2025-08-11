@@ -5,11 +5,8 @@ import json
 from qdrant_client import QdrantClient, models
 
 # --- Configuration ---
-# These should match the settings of your Qdrant instance.
 QDRANT_HOST = "localhost"
 QDRANT_PORT = 6333
-# This is the name of the collection in Qdrant where your documents are stored.
-# You will need to replace this with your actual collection name.
 COLLECTION_NAME = "my_rag_collection"
 
 
@@ -17,45 +14,37 @@ def manage_document(client: QdrantClient, collection_name: str, document_name: s
     """
     Queries a Qdrant collection for a specific document.
     It can either display the metadata of all its chunks or reconstruct the full document text.
-
-    Args:
-        client: An initialized QdrantClient instance.
-        collection_name: The name of the collection to search in.
-        document_name: The name of the document to find.
-        reconstruct: If True, reconstructs the document text from its chunks.
-        output_file: If provided, saves the reconstructed text to this file.
     """
     print(f"🔍 Accessing document: '{document_name}' in collection '{collection_name}'...")
 
     try:
-        # --- CODE IMPROVEMENT ---
-        # The key for the filter now uses dot notation to access the nested 'filename' field
-        # inside the 'metadata' object. This matches the structure you provided.
-        # We search by 'filename' for user convenience, assuming it's stored during ingestion.
         scroll_response, _ = client.scroll(
             collection_name=collection_name,
             scroll_filter=models.Filter(
                 must=[
                     models.FieldCondition(
-                        key="metadata.filename",  # <-- IMPORTANT: Using dot notation for nested query
+                        key="metadata.filename",  # Using dot notation for nested query
                         match=models.MatchValue(value=document_name),
                     )
                 ]
             ),
-            limit=1000,  # Increase limit to fetch all chunks of a large document
+            limit=1000,
             with_payload=True,
             with_vectors=False,
         )
 
         if not scroll_response:
-            print(f"\n❌ No data found for document: '{document_name}'")
-            print("Suggestion: Ensure a 'filename' field exists in your metadata during ingestion.")
+            # --- ENHANCED ERROR MESSAGE ---
+            print(f"\n❌ No data found for document where metadata.filename = '{document_name}'")
+            print("\n--- DEBUGGING SUGGESTIONS ---")
+            print("1. Data Mismatch: This usually means the 'filename' field was not present in the metadata when this document was ingested.")
+            print("2. Action Required: You must re-ingest your documents after ensuring your ingestion script adds a 'filename' field to the metadata.")
+            print(f"3. Typo Check: Double-check the document name ('{document_name}') and the collection name ('{collection_name}').")
+            print("\n💡 Tip: Use the --peek-metadata flag to inspect the actual data structure in your collection.")
             return
 
         print(f"\n✅ Found {len(scroll_response)} chunks for '{document_name}'.")
 
-        # If --reconstruct or --output-file is used, reconstruct the document.
-        # Otherwise, just display the metadata.
         if reconstruct or output_file:
             reconstruct_document_text(scroll_response, output_file)
         else:
@@ -68,30 +57,21 @@ def manage_document(client: QdrantClient, collection_name: str, document_name: s
         print(f"2. Does the collection '{collection_name}' exist?")
         print("3. Is the payload field for the document name correct? (Currently set to 'metadata.filename')")
 
+
 def display_metadata(points: list):
     """Prints the metadata for a list of Qdrant points."""
     print("Displaying chunk metadata:")
     print("-" * 40)
     for i, point in enumerate(points):
         print(f"--- Chunk {i + 1} (Point ID: {point.id}) ---")
-        # The entire payload, including the nested structure, is printed.
         metadata = point.payload
         print(json.dumps(metadata, indent=4))
         print()
 
+
 def reconstruct_document_text(points: list, output_file: str):
-    """
-    Sorts document chunks and reconstructs the full text.
-
-    Args:
-        points: A list of Qdrant points (chunks) belonging to the document.
-        output_file: The path to save the reconstructed text.
-    """
+    """Sorts document chunks and reconstructs the full text."""
     print("\nReconstructing parent document text...")
-
-    # --- CODE IMPROVEMENT: Sorting Logic for Nested Metadata ---
-    # The sorting key now correctly accesses 'page_number' and 'chunk_index'
-    # from within the nested 'metadata' object.
     try:
         points.sort(key=lambda p: (
             p.payload.get('metadata', {}).get('page_number', 0),
@@ -101,8 +81,6 @@ def reconstruct_document_text(points: list, output_file: str):
     except TypeError:
         print("⚠️ Warning: Could not sort chunks. Text may be out of order.")
 
-    # --- CODE IMPROVEMENT: Text Extraction from Nested Payload ---
-    # The text is now extracted from the 'page_content' field, as shown in your example.
     full_text = "\n\n".join([point.payload.get('page_content', '') for point in points])
 
     if output_file:
@@ -113,10 +91,36 @@ def reconstruct_document_text(points: list, output_file: str):
         except IOError as e:
             print(f"❌ Error saving file: {e}")
     else:
-        # Print the reconstructed text to the console
         print("-" * 40)
         print(full_text)
         print("-" * 40)
+
+
+def peek_at_metadata(client: QdrantClient, collection_name: str, limit: int = 5):
+    """Fetches and displays the payload of a few random points from the collection for debugging."""
+    print(f"🕵️ Peeking at the metadata of {limit} documents in '{collection_name}'...")
+    try:
+        points, _ = client.scroll(
+            collection_name=collection_name,
+            limit=limit,
+            with_payload=True,
+            with_vectors=False
+        )
+        if not points:
+            print("Collection is empty.")
+            return
+
+        print("-" * 40)
+        for i, point in enumerate(points):
+            print(f"--- Sample Document {i + 1} (Point ID: {point.id}) ---")
+            print(json.dumps(point.payload, indent=4))
+            print()
+        print("-" * 40)
+        print("Review the payload structure above. Does it contain a 'metadata' object with a 'filename' field?")
+
+    except Exception as e:
+        print(f"\nAn error occurred while peeking: {e}")
+
 
 def main():
     """Main function to parse command-line arguments and run the query."""
@@ -125,8 +129,10 @@ def main():
     )
     parser.add_argument(
         "document_name",
+        nargs='?',
+        default=None,
         type=str,
-        help="The name of the document to query (e.g., 'my_document.pdf')."
+        help="The name of the document to query (e.g., 'my_document.pdf'). Required unless --peek-metadata is used."
     )
     parser.add_argument(
         "--reconstruct",
@@ -138,6 +144,11 @@ def main():
         type=str,
         metavar="FILE_PATH",
         help="Save the reconstructed document text to the specified file."
+    )
+    parser.add_argument(
+        "--peek-metadata",
+        action="store_true",
+        help="Show the metadata of a few random documents to debug the payload structure."
     )
     parser.add_argument(
         "--collection",
@@ -159,17 +170,21 @@ def main():
     )
 
     args = parser.parse_args()
-
-    # Initialize the Qdrant client
     client = QdrantClient(host=args.host, port=args.port)
 
-    manage_document(
-        client=client,
-        collection_name=args.collection,
-        document_name=args.document_name,
-        reconstruct=args.reconstruct,
-        output_file=args.output_file
-    )
+    if args.peek_metadata:
+        peek_at_metadata(client, args.collection)
+    elif args.document_name:
+        manage_document(
+            client=client,
+            collection_name=args.collection,
+            document_name=args.document_name,
+            reconstruct=args.reconstruct,
+            output_file=args.output_file
+        )
+    else:
+        parser.error("You must provide a document_name or use the --peek-metadata flag.")
+
 
 if __name__ == "__main__":
     main()
