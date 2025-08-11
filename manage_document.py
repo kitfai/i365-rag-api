@@ -10,12 +10,27 @@ QDRANT_PORT = 6333
 COLLECTION_NAME = "my_rag_collection"
 
 
-def manage_document(client: QdrantClient, collection_name: str, document_name: str, reconstruct: bool, output_file: str):
+def manage_document(client: QdrantClient, collection_name: str, reconstruct: bool, output_file: str, document_name: str = None, document_id: str = None):
     """
-    Queries a Qdrant collection for a specific document.
+    Queries a Qdrant collection for a specific document by its name or ID.
     It can either display the metadata of all its chunks or reconstruct the full document text.
     """
-    print(f"🔍 Accessing document: '{document_name}' in collection '{collection_name}'...")
+    # --- CODE IMPROVEMENT: Dynamic Query Logic ---
+    # Determine the query key and value based on the provided identifier.
+    if document_id:
+        query_key = "metadata.doc_id"
+        query_value = document_id
+        identifier_type = "ID"
+        print(f"🔍 Accessing document by ID: '{document_id}' in collection '{collection_name}'...")
+    elif document_name:
+        query_key = "metadata.filename"
+        query_value = document_name
+        identifier_type = "filename"
+        print(f"🔍 Accessing document by filename: '{document_name}' in collection '{collection_name}'...")
+    else:
+        # This case should be prevented by the main function's logic.
+        print("Error: No document identifier (name or ID) was provided.")
+        return
 
     try:
         scroll_response, _ = client.scroll(
@@ -23,8 +38,8 @@ def manage_document(client: QdrantClient, collection_name: str, document_name: s
             scroll_filter=models.Filter(
                 must=[
                     models.FieldCondition(
-                        key="metadata.filename",  # Using dot notation for nested query
-                        match=models.MatchValue(value=document_name),
+                        key=query_key,
+                        match=models.MatchValue(value=query_value),
                     )
                 ]
             ),
@@ -35,15 +50,14 @@ def manage_document(client: QdrantClient, collection_name: str, document_name: s
 
         if not scroll_response:
             # --- ENHANCED ERROR MESSAGE ---
-            print(f"\n❌ No data found for document where metadata.filename = '{document_name}'")
+            print(f"\n❌ No data found for document where {query_key} = '{query_value}'")
             print("\n--- DEBUGGING SUGGESTIONS ---")
-            print("1. Data Mismatch: This usually means the 'filename' field was not present in the metadata when this document was ingested.")
-            print("2. Action Required: You must re-ingest your documents after ensuring your ingestion script adds a 'filename' field to the metadata.")
-            print(f"3. Typo Check: Double-check the document name ('{document_name}') and the collection name ('{collection_name}').")
+            print(f"1. Data Mismatch: Ensure the document was ingested with a '{identifier_type}' field in its metadata.")
+            print(f"2. Typo Check: Double-check the provided {identifier_type} and the collection name ('{collection_name}').")
             print("\n💡 Tip: Use the --peek-metadata flag to inspect the actual data structure in your collection.")
             return
 
-        print(f"\n✅ Found {len(scroll_response)} chunks for '{document_name}'.")
+        print(f"\n✅ Found {len(scroll_response)} chunks for the document.")
 
         if reconstruct or output_file:
             reconstruct_document_text(scroll_response, output_file)
@@ -55,7 +69,8 @@ def manage_document(client: QdrantClient, collection_name: str, document_name: s
         print("Please check the following:")
         print(f"1. Is the Qdrant service running and accessible at {QDRANT_HOST}:{QDRANT_PORT}?")
         print(f"2. Does the collection '{collection_name}' exist?")
-        print("3. Is the payload field for the document name correct? (Currently set to 'metadata.filename')")
+        print(f"3. Is the payload field for the query correct? (Currently set to '{query_key}')")
+
 
 
 def display_metadata(points: list):
@@ -169,21 +184,33 @@ def main():
         help=f"The port of the Qdrant instance (default: {QDRANT_PORT})."
     )
 
+    # --- CODE IMPROVEMENT: Added --by-id flag ---
+    parser.add_argument(
+        "--by-id",
+        type=str,
+        metavar="DOCUMENT_ID",
+        help="Query by the unique document ID (UUID) instead of the filename."
+    )
+
     args = parser.parse_args()
     client = QdrantClient(host=args.host, port=args.port)
 
     if args.peek_metadata:
         peek_at_metadata(client, args.collection)
-    elif args.document_name:
+    elif args.document_name or args.by_id:
+        if args.document_name and args.by_id:
+            parser.error("Please provide either a document_name or use --by-id, but not both.")
+
         manage_document(
             client=client,
             collection_name=args.collection,
             document_name=args.document_name,
+            document_id=args.by_id,
             reconstruct=args.reconstruct,
             output_file=args.output_file
         )
     else:
-        parser.error("You must provide a document_name or use the --peek-metadata flag.")
+        parser.error("You must provide a document_name, or use --by-id, or use the --peek-metadata flag.")
 
 
 if __name__ == "__main__":
