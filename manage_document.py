@@ -36,7 +36,7 @@ def manage_document(client: QdrantClient, collection_name: str, document_name: s
             scroll_filter=models.Filter(
                 must=[
                     models.FieldCondition(
-                        key="source",  # <-- IMPORTANT: Change this if your field name is different
+                        key="filename",  # <-- IMPORTANT: Change this if your field name is different
                         match=models.MatchValue(value=document_name),
                     )
                 ]
