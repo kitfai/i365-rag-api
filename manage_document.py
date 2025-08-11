@@ -28,15 +28,16 @@ def manage_document(client: QdrantClient, collection_name: str, document_name: s
     print(f"🔍 Accessing document: '{document_name}' in collection '{collection_name}'...")
 
     try:
-        # Scroll is the most efficient way to retrieve all points matching a filter.
-        # We assume the document name is stored in a payload field called 'source'.
-        # If you use a different field name, you must change the 'key' below.
+        # --- CODE IMPROVEMENT ---
+        # The key for the filter now uses dot notation to access the nested 'filename' field
+        # inside the 'metadata' object. This matches the structure you provided.
+        # We search by 'filename' for user convenience, assuming it's stored during ingestion.
         scroll_response, _ = client.scroll(
             collection_name=collection_name,
             scroll_filter=models.Filter(
                 must=[
                     models.FieldCondition(
-                        key="filename",  # <-- IMPORTANT: Change this if your field name is different
+                        key="metadata.filename",  # <-- IMPORTANT: Using dot notation for nested query
                         match=models.MatchValue(value=document_name),
                     )
                 ]
@@ -48,6 +49,7 @@ def manage_document(client: QdrantClient, collection_name: str, document_name: s
 
         if not scroll_response:
             print(f"\n❌ No data found for document: '{document_name}'")
+            print("Suggestion: Ensure a 'filename' field exists in your metadata during ingestion.")
             return
 
         print(f"\n✅ Found {len(scroll_response)} chunks for '{document_name}'.")
@@ -64,7 +66,7 @@ def manage_document(client: QdrantClient, collection_name: str, document_name: s
         print("Please check the following:")
         print(f"1. Is the Qdrant service running and accessible at {QDRANT_HOST}:{QDRANT_PORT}?")
         print(f"2. Does the collection '{collection_name}' exist?")
-        print("3. Is the payload field for the document name correct? (Currently set to 'source')")
+        print("3. Is the payload field for the document name correct? (Currently set to 'metadata.filename')")
 
 def display_metadata(points: list):
     """Prints the metadata for a list of Qdrant points."""
@@ -72,6 +74,7 @@ def display_metadata(points: list):
     print("-" * 40)
     for i, point in enumerate(points):
         print(f"--- Chunk {i + 1} (Point ID: {point.id}) ---")
+        # The entire payload, including the nested structure, is printed.
         metadata = point.payload
         print(json.dumps(metadata, indent=4))
         print()
@@ -86,22 +89,21 @@ def reconstruct_document_text(points: list, output_file: str):
     """
     print("\nReconstructing parent document text...")
 
-    # --- Sorting Logic ---
-    # This is a critical step. We sort chunks to put them back in the correct order.
-    # We'll try to sort by 'page_number' and then by 'chunk_index' if it exists.
-    # If these keys are not in your payload, the text might be out of order.
+    # --- CODE IMPROVEMENT: Sorting Logic for Nested Metadata ---
+    # The sorting key now correctly accesses 'page_number' and 'chunk_index'
+    # from within the nested 'metadata' object.
     try:
         points.sort(key=lambda p: (
-            p.payload.get('page_number', 0),
-            p.payload.get('chunk_index', 0) # Assumes a chunk index within the page
+            p.payload.get('metadata', {}).get('page_number', 0),
+            p.payload.get('metadata', {}).get('chunk_index', 0)
         ))
-        print("ℹ️ Sorted chunks by 'page_number' and 'chunk_index'.")
+        print("ℹ️ Sorted chunks by 'metadata.page_number' and 'metadata.chunk_index'.")
     except TypeError:
-        print("⚠️ Warning: Could not sort chunks as 'page_number' or 'chunk_index' might be missing. Text may be out of order.")
+        print("⚠️ Warning: Could not sort chunks. Text may be out of order.")
 
-    # We assume the main text content is in a payload field called 'text'.
-    # Change 'text' if your field name is different.
-    full_text = "\n\n".join([point.payload.get('text', '') for point in points])
+    # --- CODE IMPROVEMENT: Text Extraction from Nested Payload ---
+    # The text is now extracted from the 'page_content' field, as shown in your example.
+    full_text = "\n\n".join([point.payload.get('page_content', '') for point in points])
 
     if output_file:
         try:
