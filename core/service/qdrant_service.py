@@ -161,6 +161,9 @@ class QdrantRAGService:
     def _build_question_answer_chain(self):
         """Builds the final question-answering part of the RAG chain."""
         prompt_template = """You are a deterministic data extraction script. Your only function is to execute a checklist to find facts in the <context> that exactly match the <question>.
+        
+        **Context Awareness Rule:** The <context> is generated from automated PDF extraction and may be jumbled. Table rows might be flattened into a single line. You MUST use your reasoning to connect headers (like "Document No") with nearby values (like "0010008359"), even if they are not perfectly aligned.
+        
         **Your Process:**
         1.  **Deconstruct Question:** Break down the user's <question> into a checklist of required entities.
         2.  **Scan for Evidence:** Find a single, continuous block of text in the <context> that contains ALL the entities from your checklist.
