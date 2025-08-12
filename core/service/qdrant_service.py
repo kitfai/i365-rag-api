@@ -162,7 +162,7 @@ class QdrantRAGService:
         """Builds the final question-answering part of the RAG chain."""
         prompt_template = """You are a deterministic data extraction script. Your only function is to execute a checklist to find facts in the <context> that exactly match the <question>.
         
-        **Context Awareness Rule:** The <context> is generated from automated PDF extraction and may be jumbled. Table rows might be flattened into a single line. You MUST use your reasoning to connect headers (like "Document No") with nearby values (like "0010008359"), even if they are not perfectly aligned.
+        **Context Awareness Rule:** The <context> is generated from automated PDF extraction and may be jumbled. Table rows might be flattened into a single line. You MUST use your reasoning to connect headers (like "Document No") with nearby values (like "0010008359"), even if they are not perfectly aligned.The context contains headers like `## [CHUNK N | PAGE M]` that you MUST use for citation.
         
         **Your Process:**
         1.  **Deconstruct Question:** Break down the user's <question> into a checklist of required entities.
@@ -208,9 +208,10 @@ class QdrantRAGService:
         *Provide a concise, direct answer to the user's question based on your findings.*
 
         ## Detailed Breakdown
-        *List every single piece of evidence you used to construct the summary answer. For each monetary amount, specify which document it came from.*
-        -   Fact 1 from Source X
-        -   Fact 2 from Source Y
+        *List every single piece of evidence you used to construct the summary answer. For each fact, you MUST cite the document, page, and chunk number where you found it.*
+        -   Fact 1 (from `document_name.pdf`, Page 2, Chunk 5)
+        -   Fact 2 (from `document_name.pdf`, Page 2, Chunk 6)
+
 
         ## Source Documents
         *List the unique source documents you used to find the answer. List out the original file name used as reference*
@@ -391,13 +392,29 @@ class QdrantRAGService:
                 output_format="markdown",
                 size={"longest_edge": 2048}
             )
-            markdown_content = "\n\n".join([el.text for el in elements])
+            '''markdown_content = "\n\n".join([el.text for el in elements])
 
             # This will print the full extracted text to your log file for verification.
             logging.debug(f"--- Extracted Markdown for {pdf_path.name} ---\n{markdown_content}\n--- End Markdown ---")
 
             logging.info(f" -> Successfully extracted markdown from {pdf_path.name}")
+            return markdown_content if markdown_content.strip() else None'''
+            formatted_chunks = []
+            for i, el in enumerate(elements):
+                # Default to page 1 if metadata is missing for any reason
+                page_num = el.metadata.page_number or 1
+                # Create a clear header for each logical chunk from unstructured
+                chunk_header = f"## [CHUNK {i + 1} | PAGE {page_num}]"
+                formatted_chunks.append(f"{chunk_header}\n{el.text}")
+
+            # Join the formatted chunks with a distinct separator
+            markdown_content = "\n\n---\n\n".join(formatted_chunks)
+
+            logging.debug(f"--- Enriched Markdown for {pdf_path.name} ---\n{markdown_content}\n--- End Markdown ---")
+            logging.info(f" -> Successfully extracted enriched markdown from {pdf_path.name}")
             return markdown_content if markdown_content.strip() else None
+
+
         except Exception as e:
             logging.error(f" -> Error processing {pdf_path.name} to markdown: {e}", exc_info=True)
             return None
