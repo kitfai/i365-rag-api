@@ -138,7 +138,7 @@ class QdrantRAGService:
         # Load marker-pdf models once during initialization for efficiency
         logging.info(f"Loading marker-pdf models with backend: {settings.MARKER_LLM_BACKEND}")
         try:
-            self.marker_models = marker_pdf.load_all_models(
+            self.marker_models = marker.load_all_models(
                 llm_backend=settings.MARKER_LLM_BACKEND,
                 batch_multiplier=settings.MARKER_BATCH_MULTIPLIER
             )
