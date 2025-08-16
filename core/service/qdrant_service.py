@@ -143,9 +143,11 @@ class QdrantRAGService:
                 llm_backend=settings.MARKER_LLM_BACKEND,
                 batch_multiplier=settings.MARKER_BATCH_MULTIPLIER
             )
+            if not self.marker_models:
+                raise RuntimeError("marker.models.load_all_models returned a falsy value. Models could not be loaded.")
         except Exception as e:
-            logging.error(f"Failed to load marker-pdf models: {e}", exc_info=True)
-            self.marker_models = None
+            logging.critical(f"CRITICAL ERROR: Failed to load marker-pdf models. The RAG service cannot start.", exc_info=True)
+            raise RuntimeError("Failed to initialize marker-pdf models. Check logs for details on the underlying error (e.g., GPU memory, CUDA version, network issues).") from e
 
         self._setup_qdrant_collection(force_rebuild)
 
