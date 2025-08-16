@@ -21,7 +21,7 @@ from langchain_qdrant import QdrantVectorStore
 from langchain.retrievers import ParentDocumentRetriever
 from langchain_openai import ChatOpenAI
 
-import marker_pdf
+import marker
 
 # --- Qdrant & Configuration ---
 import qdrant_client
