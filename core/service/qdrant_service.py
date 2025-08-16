@@ -180,7 +180,7 @@ class QdrantRAGService:
         """Builds the final question-answering part of the RAG chain."""
         prompt_template = """You are a deterministic data extraction script. Your only function is to execute a checklist to find facts in the <context> that exactly match the <question>.
 
-        **Context Awareness Rule:** The <context> is generated from automated PDF extraction and may be jumbled. Table rows might be flattened into a single line. You MUST use your reasoning to connect headers (like "Document No") with nearby values (like "0010008359"), even if they are not perfectly aligned.The context contains headers like `## [CHUNK N | PAGE M]` that you MUST use for citation.
+        **Context Awareness Rule:** The <context> is generated from automated PDF extraction and may be jumbled. Each document's content is enclosed between `--- START OF DOCUMENT: [document_name.pdf] ---` and the next document's start. You MUST use your reasoning to connect headers (like "Document No") with nearby values (like "0010008359"), even if they are not perfectly aligned. You MUST use the document name from the header for citation.
         
         **Your Process:**
         1.  **Deconstruct Question:** Break down the user's <question> into a checklist of required entities.
@@ -323,9 +323,20 @@ class QdrantRAGService:
             logging.info(f"Step 2: Found {len(retrieved_docs)} documents. Invoking LLM chain...")
             invocation_start_time = time.time()
 
+            # --- CONTEXT FORMATTING ---
+            # Format the context to include document source headers for the LLM.
+            # This matches the updated prompt instructions for marker-pdf output.
+            formatted_context_docs = []
+            for doc in retrieved_docs:
+                source_name = Path(doc.metadata.get("source", "Unknown Document")).name
+                header = f"--- START OF DOCUMENT: {source_name} ---\n"
+                # Create a new document to avoid modifying the original retrieved docs
+                formatted_doc = LangchainDocument(page_content=header + doc.page_content, metadata=doc.metadata)
+                formatted_context_docs.append(formatted_doc)
+
             raw_answer = await self.question_answer_chain.ainvoke({
                 "input": question,
-                "context": retrieved_docs
+                "context": formatted_context_docs
             })
 
             invocation_end_time = time.time()
@@ -398,42 +409,29 @@ class QdrantRAGService:
         return "Invoice"
 
     def _process_pdf_to_markdown(self, pdf_path: Path) -> Optional[str]:
-        logging.info(f" -> Starting markdown extraction for {pdf_path.name}")
+        """
+        Converts a PDF file to markdown using marker-pdf.
+        This is a synchronous method intended to be run in a separate thread.
+        """
+        logging.info(f" -> Starting markdown extraction for {pdf_path.name} using marker-pdf")
+        if not self.marker_models:
+            logging.error("Marker models are not loaded. Cannot process PDF.")
+            return None
+
         try:
-            # This resolves the deprecation warning from the unstructured library.
-            elements = partition(
-                filename=str(pdf_path),
-                strategy="hi_res",
-                infer_table_structure=True,
-                languages=["eng"],
-                output_format="markdown",
-                size={"longest_edge": 2048}
-            )
-            '''markdown_content = "\n\n".join([el.text for el in elements])
+            # marker.convert_single_pdf takes a path and the loaded models.
+            markdown_text, out_meta = marker.convert_single_pdf(str(pdf_path), self.marker_models)
 
-            # This will print the full extracted text to your log file for verification.
-            logging.debug(f"--- Extracted Markdown for {pdf_path.name} ---\n{markdown_content}\n--- End Markdown ---")
+            if not markdown_text or not markdown_text.strip():
+                logging.warning(f" -> Marker-pdf produced no content for {pdf_path.name}. Skipping file.")
+                return None
 
-            logging.info(f" -> Successfully extracted markdown from {pdf_path.name}")
-            return markdown_content if markdown_content.strip() else None'''
-            formatted_chunks = []
-            for i, el in enumerate(elements):
-                # Default to page 1 if metadata is missing for any reason
-                page_num = el.metadata.page_number or 1
-                # Create a clear header for each logical chunk from unstructured
-                chunk_header = f"## [CHUNK {i + 1} | PAGE {page_num}]"
-                formatted_chunks.append(f"{chunk_header}\n{el.text}")
-
-            # Join the formatted chunks with a distinct separator
-            markdown_content = "\n\n---\n\n".join(formatted_chunks)
-
-            logging.debug(f"--- Enriched Markdown for {pdf_path.name} ---\n{markdown_content}\n--- End Markdown ---")
-            logging.info(f" -> Successfully extracted enriched markdown from {pdf_path.name}")
-            return markdown_content if markdown_content.strip() else None
-
+            logging.debug(f"--- Extracted Markdown for {pdf_path.name} ---\n{markdown_text}\n--- End Markdown ---")
+            logging.info(f" -> Successfully extracted markdown from {pdf_path.name} (Length: {len(markdown_text)})")
+            return markdown_text
 
         except Exception as e:
-            logging.error(f" -> Error processing {pdf_path.name} to markdown: {e}", exc_info=True)
+            logging.error(f" -> Error processing {pdf_path.name} with marker-pdf: {e}", exc_info=True)
             return None
 
     async def _process_single_pdf(self, pdf_file: Path, indexed_files: set):
