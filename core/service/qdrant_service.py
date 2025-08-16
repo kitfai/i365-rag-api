@@ -18,9 +18,11 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_qdrant import QdrantVectorStore
-from unstructured.partition.auto import partition
 from langchain.retrievers import ParentDocumentRetriever
 from langchain_openai import ChatOpenAI
+
+# --- Marker PDF Processing ---
+import marker
 
 # --- Qdrant & Configuration ---
 import qdrant_client
@@ -54,6 +56,11 @@ class RagSettings(BaseSettings):
     # --- Classifier Model ---
     # For simplicity, we use the same vLLM endpoint for classification
     LLM_CLASSIFIER_MODEL: str = "llama-3-8b-instruct"
+
+    # --- Marker PDF Conversion Settings ---
+    # Backend for marker-pdf. "vllm" for GPU, "torch" for CPU/GPU.
+    MARKER_LLM_BACKEND: str = "vllm"
+    MARKER_BATCH_MULTIPLIER: int = 4
 
     # --- LLM Generation Parameters ---
     LLM_TIMEOUT: int = 360
@@ -129,6 +136,17 @@ class QdrantRAGService:
             model_kwargs={'device': 'cuda' if torch.cuda.is_available() else 'cpu'}
         )
 
+        # Load marker-pdf models once during initialization for efficiency
+        logging.info(f"Loading marker-pdf models with backend: {settings.MARKER_LLM_BACKEND}")
+        try:
+            self.marker_models = marker.models.load_all_models(
+                llm_backend=settings.MARKER_LLM_BACKEND,
+                batch_multiplier=settings.MARKER_BATCH_MULTIPLIER
+            )
+        except Exception as e:
+            logging.error(f"Failed to load marker-pdf models: {e}", exc_info=True)
+            self.marker_models = None
+
         self._setup_qdrant_collection(force_rebuild)
 
         self.vectorstore = QdrantVectorStore(
@@ -161,8 +179,8 @@ class QdrantRAGService:
     def _build_question_answer_chain(self):
         """Builds the final question-answering part of the RAG chain."""
         prompt_template = """You are a deterministic data extraction script. Your only function is to execute a checklist to find facts in the <context> that exactly match the <question>.
-        
-        **Context Awareness Rule:** The <context> is generated from automated PDF extraction and may be jumbled. Table rows might be flattened into a single line. You MUST use your reasoning to connect headers (like "Document No") with nearby values (like "0010008359"), even if they are not perfectly aligned.The context contains headers like `## [CHUNK N | PAGE M]` that you MUST use for citation.
+
+        **Context Awareness Rule:** The <context> is generated from automated PDF extraction and may be jumbled. Each document is clearly marked with `--- START OF DOCUMENT: document_name.pdf ---`. You MUST use your reasoning to connect headers (like "Document No") with nearby values (like "0010008359"), even if they are not perfectly aligned.
         
         **Your Process:**
         1.  **Deconstruct Question:** Break down the user's <question> into a checklist of required entities.
@@ -208,9 +226,8 @@ class QdrantRAGService:
         *Provide a concise, direct answer to the user's question based on your findings.*
 
         ## Detailed Breakdown
-        *List every single piece of evidence you used to construct the summary answer. For each fact, you MUST cite the document, page, and chunk number where you found it.*
-        -   Fact 1 (from `document_name.pdf`, Page 2, Chunk 5)
-        -   Fact 2 (from `document_name.pdf`, Page 2, Chunk 6)
+        *List every single piece of evidence you used to construct the summary answer. For each fact, you MUST cite the source document name where you found it, which is provided in the context headers.*
+        -   Fact 1 (from `document_name.pdf`)
 
 
         ## Source Documents

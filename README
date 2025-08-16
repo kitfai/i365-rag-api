@@ -324,3 +324,67 @@ curl http://localhost:8000/v1/completions \
         "max_tokens": 100,
         "temperature": 0
     }'
+
+
+alternatives to unstructured that excel at table extraction.
+1.Marker (Top Recommendation): This is a state-of-the-art, deep-learning-based tool from a Stanford team. It's designed specifically to convert PDFs into high-quality, clean Markdown, and it excels at handling complex layouts, including tables, code blocks, and headers. It's the most direct and powerful replacement for your current unstructured call.
+2.Nougat (Excellent Alternative): Developed by Meta AI, Nougat (Neural Optical Understanding for Academic Documents) is another powerful model that converts PDF pages into semantic Markdown. It's particularly strong with scientific and academic layouts but works very well on general documents too.
+3.Camelot (The Specialist): If your only problem is tables and you want to keep unstructured for other text, Camelot is the go-to specialist. It's designed exclusively for finding and extracting tables from PDFs into pandas DataFrames, which you can then easily convert to perfect Markdown tables.
+
+pip install marker-pdf
+# D:/infra365/codes/rag-git/core/service/qdrant_service.py
+
+# --- Add these imports at the top of your file ---
+from marker.convert import convert_pdf
+from marker.models import load_all_models
+
+# ... other imports ...
+
+class QdrantRAGService:
+    # ... (inside your class) ...
+
+    def __init__(self, force_rebuild: bool = False):
+        if self._initialized:
+            return
+
+        # ... (existing __init__ code) ...
+
+        # --- WORLD-CLASS IMPROVEMENT: Load marker models once on startup ---
+        # This is a heavy operation, so we do it only once.
+        logging.info("Loading Marker PDF processing models (this may take a moment)...")
+        self.marker_models = load_all_models()
+        logging.info("Marker models loaded successfully.")
+
+        self._build_question_answer_chain()
+        self._initialized = True
+        logging.info("--- RAG Service is ready for queries. ---")
+
+    # ... (other methods) ...
+
+    def _process_pdf_to_markdown(self, pdf_path: Path) -> Optional[str]:
+        """
+        Processes a PDF using the Marker library to get high-quality,
+        structured markdown that preserves table layouts.
+        """
+        logging.info(f" -> Starting markdown extraction with Marker for {pdf_path.name}")
+        try:
+            # Use the pre-loaded models to convert the PDF.
+            # This is a synchronous, CPU/GPU-bound call, perfect for `asyncio.to_thread`.
+            markdown_content, _ = convert_pdf(
+                str(pdf_path),
+                self.marker_models,
+                batch_multiplier=2  # Adjust based on your GPU VRAM
+            )
+
+            # This will print the full extracted text to your log file for verification.
+            # You will see clean, pipe-based markdown tables here.
+            logging.debug(f"--- Extracted Markdown for {pdf_path.name} ---\n{markdown_content}\n--- End Markdown ---")
+
+            logging.info(f" -> Successfully extracted markdown from {pdf_path.name} with Marker")
+            return markdown_content if markdown_content.strip() else None
+        except Exception as e:
+            logging.error(f" -> Error processing {pdf_path.name} with Marker: {e}", exc_info=True)
+            # As a fallback, you could optionally call the unstructured method here
+            return None
+
+    # ... (the rest of your class remains the same) ...

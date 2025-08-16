@@ -27,3 +27,4 @@ fastapi
 langchain_ollama
 langchain_huggingface
 langchain-openai
+"marker-pdf[vllm]"
