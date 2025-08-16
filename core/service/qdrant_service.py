@@ -21,7 +21,7 @@ from langchain_qdrant import QdrantVectorStore
 from langchain.retrievers import ParentDocumentRetriever
 from langchain_openai import ChatOpenAI
 
-import marker
+import marker_pdf
 
 # --- Qdrant & Configuration ---
 import qdrant_client
@@ -138,7 +138,7 @@ class QdrantRAGService:
         # Load marker-pdf models once during initialization for efficiency
         logging.info(f"Loading marker-pdf models with backend: {settings.MARKER_LLM_BACKEND}")
         try:
-            self.marker_models = marker.load_all_models(
+            self.marker_models = marker_pdf.load_all_models(
                 llm_backend=settings.MARKER_LLM_BACKEND,
                 batch_multiplier=settings.MARKER_BATCH_MULTIPLIER
             )
@@ -420,8 +420,8 @@ class QdrantRAGService:
             return None
 
         try:
-            # marker.convert_single_pdf takes a path and the loaded models.
-            markdown_text, out_meta = marker.convert_single_pdf(str(pdf_path), self.marker_models)
+            # marker_pdf.convert_single_pdf takes a path and the loaded models.
+            markdown_text, out_meta = marker_pdf.convert_single_pdf(str(pdf_path), self.marker_models)
 
             if not markdown_text or not markdown_text.strip():
                 logging.warning(f" -> Marker-pdf produced no content for {pdf_path.name}. Skipping file.")
