@@ -424,7 +424,7 @@ class QdrantRAGService:
 
         try:
             # Use the pre-loaded converter instance for thread-safe processing
-            rendered = self.marker_converter(pdf_path)
+            rendered = self.marker_converter(str(pdf_path))
             markdown_text, _, images = text_from_rendered(rendered)
 
             if not markdown_text or not markdown_text.strip():
