@@ -430,8 +430,7 @@ class QdrantRAGService:
             return None
 
         with self.lock:
-            try: # Use the pre-loaded converter instance for thread-safe processing
-                # Use the pre-loaded converter instance for thread-safe processing
+            try:
                 rendered = self.marker_converter(str(pdf_path))
                 markdown_text, _, images = text_from_rendered(rendered)
 
@@ -452,6 +451,11 @@ class QdrantRAGService:
             except Exception as e:
                 logging.error(f" -> Error processing {pdf_path.name} with marker-pdf: {e}", exc_info=True)
                 return None
+            finally:
+                # Proactively free up cached GPU memory after each conversion
+                # to prevent out-of-memory errors in tight VRAM environments.
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
     async def _process_single_pdf(self, pdf_file: Path, indexed_files: set):
         if pdf_file.name in indexed_files:
