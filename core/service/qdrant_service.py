@@ -67,6 +67,7 @@ class RagSettings(BaseSettings):
     # Backend for marker-pdf. "vllm" for GPU, "torch" for CPU/GPU.
     MARKER_LLM_BACKEND: str = "vllm"
     MARKER_BATCH_MULTIPLIER: int = 4
+    PDF_PROCESSING_WORKERS: int = 1  # Limit concurrent PDF processing tasks to reduce GPU load
 
     # --- LLM Generation Parameters ---
     LLM_TIMEOUT: int = 360
@@ -116,6 +117,7 @@ class QdrantRAGService:
             return
 
         self.lock = Lock()
+        self.pdf_processing_semaphore = asyncio.Semaphore(settings.PDF_PROCESSING_WORKERS)
 
         logging.info("--- Initializing Qdrant RAG Service (Singleton Instance) ---")
 
@@ -482,6 +484,11 @@ class QdrantRAGService:
             logging.error(f"  -> FAILED to process {pdf_file.name} after content extraction: {e}", exc_info=True)
             return None
 
+    async def run_pdf_worker(self, pdf_file: Path, indexed_files: set):
+        """A wrapper for _process_single_pdf to control concurrency with a semaphore."""
+        async with self.pdf_processing_semaphore:
+            return await self._process_single_pdf(pdf_file, indexed_files)
+
     async def _process_and_upload_documents(self):
         logging.info("Step 1/3: Checking for already indexed files in Qdrant...")
         try:
@@ -508,8 +515,8 @@ class QdrantRAGService:
             return
 
         logging.info(f" -> Found {len(pdfs_to_process)} new documents to process.")
-        logging.info("Step 3/3: Processing new documents in parallel...")
-        tasks = [self._process_single_pdf(pdf_file, indexed_files) for pdf_file in pdfs_to_process]
+        logging.info(f"Step 3/3: Processing new documents in parallel (max {settings.PDF_PROCESSING_WORKERS} workers)...")
+        tasks = [self.run_pdf_worker(pdf_file, indexed_files) for pdf_file in pdfs_to_process]
         results = await asyncio.gather(*tasks)
         processed_count = sum(1 for r in results if r is not None)
         logging.info(f" -> Parallel processing complete. Successfully added {processed_count} new documents.")
