@@ -184,7 +184,7 @@ class QdrantRAGService:
             vectorstore=self.vectorstore,
             docstore=self.docstore,
             child_splitter=child_splitter,
-            parent_splitter
+            parent_splitter=parent_splitter,
         )
         self.retriever.search_kwargs = {"k": settings.RETRIEVER_TOP_K}  # Fetch top 5 candidate documents
 
