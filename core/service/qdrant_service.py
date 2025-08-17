@@ -21,6 +21,8 @@ from langchain_qdrant import QdrantVectorStore
 from langchain.retrievers import ParentDocumentRetriever
 from langchain_openai import ChatOpenAI
 
+from threading import Lock
+
 #from marker.convert import convert_single_pdf
 #from marker.models import load_all_models
 
@@ -112,6 +114,8 @@ class QdrantRAGService:
     def __init__(self, force_rebuild: bool = False):
         if self._initialized:
             return
+
+        self.lock = Lock()
 
         logging.info("--- Initializing Qdrant RAG Service (Singleton Instance) ---")
 
@@ -423,28 +427,29 @@ class QdrantRAGService:
             logging.error("Marker converter is not loaded. Cannot process PDF.")
             return None
 
-        try: # Use the pre-loaded converter instance for thread-safe processing
-            # Use the pre-loaded converter instance for thread-safe processing
-            rendered = self.marker_converter(str(pdf_path))
-            markdown_text, _, images = text_from_rendered(rendered)
+        with self.lock:
+            try: # Use the pre-loaded converter instance for thread-safe processing
+                # Use the pre-loaded converter instance for thread-safe processing
+                rendered = self.marker_converter(str(pdf_path))
+                markdown_text, _, images = text_from_rendered(rendered)
 
-            if not markdown_text or not markdown_text.strip():
-                logging.warning(f" -> Marker-pdf produced no content for {pdf_path.name}. Skipping file.")
+                if not markdown_text or not markdown_text.strip():
+                    logging.warning(f" -> Marker-pdf produced no content for {pdf_path.name}. Skipping file.")
+                    return None
+
+                logging.debug(f"--- Extracted Markdown for {pdf_path.name} ---\n{markdown_text}\n--- End Markdown ---")
+                logging.info(f" -> Successfully extracted markdown from {pdf_path.name} (Length: {len(markdown_text)})")
+                return markdown_text
+
+            except PdfiumError as pe:
+                logging.error(
+                    f" -> PDFIUM ERROR processing {pdf_path.name}. The file is likely corrupted or password-protected. Skipping file. Details: {pe}",
+                    exc_info=False
+                )
                 return None
-
-            logging.debug(f"--- Extracted Markdown for {pdf_path.name} ---\n{markdown_text}\n--- End Markdown ---")
-            logging.info(f" -> Successfully extracted markdown from {pdf_path.name} (Length: {len(markdown_text)})")
-            return markdown_text
-
-        except PdfiumError as pe:
-            logging.error(
-                f" -> PDFIUM ERROR processing {pdf_path.name}. The file is likely corrupted or password-protected. Skipping file. Details: {pe}",
-                exc_info=False
-            )
-            return None
-        except Exception as e:
-            logging.error(f" -> Error processing {pdf_path.name} with marker-pdf: {e}", exc_info=True)
-            return None
+            except Exception as e:
+                logging.error(f" -> Error processing {pdf_path.name} with marker-pdf: {e}", exc_info=True)
+                return None
 
     async def _process_single_pdf(self, pdf_file: Path, indexed_files: set):
         if pdf_file.name in indexed_files:
