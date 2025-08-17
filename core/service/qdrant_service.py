@@ -317,10 +317,20 @@ class QdrantRAGService:
             else:
                 logging.info("No doc_type filter applied. Using default retriever.")
 
+            # --- Retrieval Augmentation: Boost key identifiers ---
+            # Extract potential document IDs from the question to improve retrieval accuracy for specific documents.
+            # This helps the retriever prioritize documents that contain these exact strings.
+            doc_ids = re.findall(r'\b[A-Z0-9]+-[A-Z]{2}\w+\b', question, re.IGNORECASE)
+            retrieval_question = question
+            if doc_ids:
+                id_string = " ".join(doc_ids)
+                retrieval_question = f"{question} {id_string}"
+                logging.info(f"Augmented retrieval query with IDs: '{id_string}'")
+
             # --- World-Class RAG: Separate retrieval from generation for better control ---
             # Step 1: Retrieve documents from the vector store.
             logging.info("Step 1: Retrieving relevant documents...")
-            retrieved_docs = await active_retriever.ainvoke(question)
+            retrieved_docs = await active_retriever.ainvoke(retrieval_question)
 
             # Step 2: Explicitly handle the case where no documents are found.
             if not retrieved_docs:
