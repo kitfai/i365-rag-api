@@ -51,7 +51,7 @@ class RagSettings(BaseSettings):
     QDRANT_PORT: int = 6333
     QDRANT_COLLECTION_NAME: str = "rag_parent_documents"
     EMBEDDING_MODEL_NAME: str = 'BAAI/bge-large-en-v1.5'
-    RETRIEVER_TOP_K: int = 2  # New setting, reduced from 5 to 3
+    RETRIEVER_TOP_K: int = 1  # New setting, reduced from 5 to 3
 
     # --- VLLM Server Configuration ---
     # The model name as served by your vLLM instance
