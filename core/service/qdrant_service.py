@@ -30,7 +30,7 @@ from qdrant_client.http import models
 from qdrant_client.http.exceptions import UnexpectedResponse
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from marker.converters.pdf import PdfConverter
-from marker.models import create_model_dict
+from marker import models
 from marker.output import text_from_rendered
 
 # --- Define Document Types ---
@@ -428,7 +428,7 @@ class QdrantRAGService:
             # marker_pdf.convert_single_pdf takes a path and the loaded models.
             #markdown_text, out_meta = convert_single_pdf(str(pdf_path), self.marker_models)
             converter = PdfConverter(
-                artifact_dict=create_model_dict(),
+                artifact_dict=models.create_model_dict(),
             )
             rendered = converter(pdf_path)
             markdown_text, _, images = text_from_rendered(rendered)
