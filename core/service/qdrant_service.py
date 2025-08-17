@@ -32,6 +32,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from marker.converters.pdf import PdfConverter
 from marker.models import create_model_dict
 from marker.output import text_from_rendered
+from pypdfium2 import PdfiumError
 
 # --- Define Document Types ---
 DocType = Literal["Invoice", "Interest Advice", "Billing", "Unknown"]
@@ -422,7 +423,7 @@ class QdrantRAGService:
             logging.error("Marker converter is not loaded. Cannot process PDF.")
             return None
 
-        try:
+        try: # Use the pre-loaded converter instance for thread-safe processing
             # Use the pre-loaded converter instance for thread-safe processing
             rendered = self.marker_converter(str(pdf_path))
             markdown_text, _, images = text_from_rendered(rendered)
@@ -435,6 +436,12 @@ class QdrantRAGService:
             logging.info(f" -> Successfully extracted markdown from {pdf_path.name} (Length: {len(markdown_text)})")
             return markdown_text
 
+        except PdfiumError as pe:
+            logging.error(
+                f" -> PDFIUM ERROR processing {pdf_path.name}. The file is likely corrupted or password-protected. Skipping file. Details: {pe}",
+                exc_info=False
+            )
+            return None
         except Exception as e:
             logging.error(f" -> Error processing {pdf_path.name} with marker-pdf: {e}", exc_info=True)
             return None
