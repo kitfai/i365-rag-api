@@ -140,18 +140,16 @@ class QdrantRAGService:
         )
 
         # Load marker-pdf models once during initialization for efficiency
-        '''logging.info(f"Loading marker-pdf models with backend: {settings.MARKER_LLM_BACKEND}")
+        logging.info(f"Loading marker-pdf models...")
         try:
-            #model_list = load_all_models()
-            self.marker_models = load_all_models(
-                llm_backend=settings.MARKER_LLM_BACKEND,
-                batch_multiplier=settings.MARKER_BATCH_MULTIPLIER
-            )
-            if not self.marker_models:
-                raise RuntimeError("marker.models.load_all_models returned a falsy value. Models could not be loaded.")
+            # Create the model dictionary and converter once to be reused by all threads
+            model_dict = create_model_dict()
+            self.marker_converter = PdfConverter(artifact_dict=model_dict)
+            if not self.marker_converter:
+                raise RuntimeError("PdfConverter initialization failed.")
         except Exception as e:
             logging.critical(f"CRITICAL ERROR: Failed to load marker-pdf models. The RAG service cannot start.", exc_info=True)
-            raise RuntimeError("Failed to initialize marker-pdf models. Check logs for details on the underlying error (e.g., GPU memory, CUDA version, network issues).") from e'''
+            raise RuntimeError("Failed to initialize marker-pdf models. Check logs for details on the underlying error (e.g., GPU memory, CUDA version, network issues).") from e
 
         self._setup_qdrant_collection(force_rebuild)
 
@@ -420,17 +418,13 @@ class QdrantRAGService:
         This is a synchronous method intended to be run in a separate thread.
         """
         logging.info(f" -> Starting markdown extraction for {pdf_path.name} using marker-pdf")
-        '''if not self.marker_models:
-            logging.error("Marker models are not loaded. Cannot process PDF.")
-            return None'''
+        if not hasattr(self, 'marker_converter') or not self.marker_converter:
+            logging.error("Marker converter is not loaded. Cannot process PDF.")
+            return None
 
         try:
-            # marker_pdf.convert_single_pdf takes a path and the loaded models.
-            #markdown_text, out_meta = convert_single_pdf(str(pdf_path), self.marker_models)
-            converter = PdfConverter(
-                artifact_dict=create_model_dict(),
-            )
-            rendered = converter(pdf_path)
+            # Use the pre-loaded converter instance for thread-safe processing
+            rendered = self.marker_converter(pdf_path)
             markdown_text, _, images = text_from_rendered(rendered)
 
             if not markdown_text or not markdown_text.strip():
