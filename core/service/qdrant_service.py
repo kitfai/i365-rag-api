@@ -29,6 +29,9 @@ import qdrant_client
 from qdrant_client.http import models
 from qdrant_client.http.exceptions import UnexpectedResponse
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from marker.converters.pdf import PdfConverter
+from marker.models import create_model_dict
+from marker.output import text_from_rendered
 
 # --- Define Document Types ---
 DocType = Literal["Invoice", "Interest Advice", "Billing", "Unknown"]
@@ -137,7 +140,7 @@ class QdrantRAGService:
         )
 
         # Load marker-pdf models once during initialization for efficiency
-        logging.info(f"Loading marker-pdf models with backend: {settings.MARKER_LLM_BACKEND}")
+        '''logging.info(f"Loading marker-pdf models with backend: {settings.MARKER_LLM_BACKEND}")
         try:
             #model_list = load_all_models()
             self.marker_models = load_all_models(
@@ -148,7 +151,7 @@ class QdrantRAGService:
                 raise RuntimeError("marker.models.load_all_models returned a falsy value. Models could not be loaded.")
         except Exception as e:
             logging.critical(f"CRITICAL ERROR: Failed to load marker-pdf models. The RAG service cannot start.", exc_info=True)
-            raise RuntimeError("Failed to initialize marker-pdf models. Check logs for details on the underlying error (e.g., GPU memory, CUDA version, network issues).") from e
+            raise RuntimeError("Failed to initialize marker-pdf models. Check logs for details on the underlying error (e.g., GPU memory, CUDA version, network issues).") from e'''
 
         self._setup_qdrant_collection(force_rebuild)
 
@@ -417,13 +420,18 @@ class QdrantRAGService:
         This is a synchronous method intended to be run in a separate thread.
         """
         logging.info(f" -> Starting markdown extraction for {pdf_path.name} using marker-pdf")
-        if not self.marker_models:
+        '''if not self.marker_models:
             logging.error("Marker models are not loaded. Cannot process PDF.")
-            return None
+            return None'''
 
         try:
             # marker_pdf.convert_single_pdf takes a path and the loaded models.
-            markdown_text, out_meta = convert_single_pdf(str(pdf_path), self.marker_models)
+            #markdown_text, out_meta = convert_single_pdf(str(pdf_path), self.marker_models)
+            converter = PdfConverter(
+                artifact_dict=create_model_dict(),
+            )
+            rendered = converter(pdf_path)
+            markdown_text, _, images = text_from_rendered(rendered)
 
             if not markdown_text or not markdown_text.strip():
                 logging.warning(f" -> Marker-pdf produced no content for {pdf_path.name}. Skipping file.")
