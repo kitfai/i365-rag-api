@@ -174,11 +174,17 @@ class QdrantRAGService:
         # This splitter is used to create small, searchable chunks from the parent documents.
         child_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
 
+        # This splitter creates the large "parent" documents that will be retrieved.
+        # Its chunk size is set to be large enough to provide good context, but small
+        # enough to ensure it fits within the LLM's context window, preventing overflow errors.
+        parent_splitter = RecursiveCharacterTextSplitter(chunk_size=4000, chunk_overlap=200)
+
         # Use the ParentDocumentRetriever directly for robustness and simplicity.
         self.retriever = ParentDocumentRetriever(
             vectorstore=self.vectorstore,
             docstore=self.docstore,
             child_splitter=child_splitter,
+            parent_splitter
         )
         self.retriever.search_kwargs = {"k": settings.RETRIEVER_TOP_K}  # Fetch top 5 candidate documents
 
