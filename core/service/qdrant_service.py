@@ -50,7 +50,7 @@ class RagSettings(BaseSettings):
     QDRANT_PORT: int = 6333
     QDRANT_COLLECTION_NAME: str = "rag_parent_documents"
     EMBEDDING_MODEL_NAME: str = 'BAAI/bge-large-en-v1.5'
-    RETRIEVER_TOP_K: int = 3  # New setting, reduced from 5 to 3
+    RETRIEVER_TOP_K: int = 5  # New setting, reduced from 5 to 3
 
     # --- VLLM Server Configuration ---
     # The model name as served by your vLLM instance
@@ -193,6 +193,7 @@ class QdrantRAGService:
         **Context Awareness Rule:** The <context> is generated from automated PDF extraction and may be jumbled. Each document's content is enclosed between `--- START OF DOCUMENT: [document_name.pdf] ---` and the next document's start. You MUST use your reasoning to connect headers (like "Document No") with nearby values (like "0010008359"), even if they are not perfectly aligned. You MUST use the document name from the header for citation.
         
         **Your Process:**
+        -   **Retrieval Imperfection Rule:** The provided <context> may contain irrelevant documents because of system limitations. You MUST prioritize finding a document whose name or content explicitly matches key entities in the <question> (like a document number or type) before extracting the answer.
         1.  **Deconstruct Question:** Break down the user's <question> into a checklist of required entities.
         2.  **Scan for Evidence:** Find a single, continuous block of text in the <context> that contains ALL the entities from your checklist.
         3.  **Verify Checklist:** In the <scratchpad>, you MUST fill out the verification checklist. For each item, you must state Yes or No.

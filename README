@@ -388,3 +388,7 @@ class QdrantRAGService:
             return None
 
     # ... (the rest of your class remains the same) ...
+
+
+
+    python manage_document.py --by-id "635b3ce6-ecb5-40df-9bd8-dae56e04bf5f" --collection rag_parent_documents > debit.txt
