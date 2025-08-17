@@ -428,7 +428,8 @@ class QdrantRAGService:
             return None
         logging.info(f"  -> Markdown content received for {pdf_file.name}. Classifying document type...")
         try:
-            doc_type = await self._classify_document_type(markdown_content)
+            #ckf doc_type = await self._classify_document_type(markdown_content)
+            doc_type = "Invoice"
             logging.info(f"  -> Classified {pdf_file.name} as type: {doc_type}. Now adding to retriever.")
 
             parent_doc = LangchainDocument(
