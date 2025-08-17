@@ -190,7 +190,7 @@ class QdrantRAGService:
         """Builds the final question-answering part of the RAG chain."""
         prompt_template = """You are a deterministic data extraction script. Your only function is to execute a checklist to find facts in the <context> that exactly match the <question>.
 
-        **Context Awareness Rule:** The <context> is generated from automated PDF extraction and may be jumbled. Each document's content is enclosed between `--- START OF DOCUMENT: [document_name.pdf] ---` and the next document's start. You MUST use your reasoning to connect headers (like "Document No") with nearby values (like "0010008359"), even if they are not perfectly aligned. You MUST use the document name from the header for citation.
+        **Context Awareness Rule:** The <context> is generated from automated PDF extraction and may be jumbled. Each document's content is enclosed between `--- START OF DOCUMENT: [document_name.pdf] ---` and the next document's start. You MUST use your reasoning to connect "Document No" to the relevant Document Type (Example where if the Document contains "Credit Note", look for "Credit Note No", if the Document contains "Debit Note", look for "Debit Note No", etc.) if they are not perfectly aligned. You MUST use the document name from the header for citation.
         
         **Your Process:**
         -   **Retrieval Imperfection Rule:** The provided <context> may contain irrelevant documents because of system limitations. You MUST prioritize finding a document whose name or content explicitly matches key entities in the <question> (like a document number or type) before extracting the answer.
