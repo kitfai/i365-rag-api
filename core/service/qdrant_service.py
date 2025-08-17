@@ -182,9 +182,30 @@ class QdrantRAGService:
         self.retriever.search_kwargs = {"k": settings.RETRIEVER_TOP_K}  # Fetch top 5 candidate documents
 
         self._build_question_answer_chain()
+        self._build_query_transformer_chain()
 
         self._initialized = True
         logging.info("--- RAG Service is ready for queries. ---")
+
+    def _build_query_transformer_chain(self):
+        """Builds a chain to rewrite a user's question into a more retriever-friendly format."""
+        prompt_template = """You are an expert at query optimization for vector databases. Your task is to transform a user's question into a concise, keyword-rich query.
+Extract all key entities like names, document numbers, project names, and specific metrics.
+Combine these entities into a single, space-separated string. Do not add any conversational text.
+
+Example 1:
+Question: How much is Mable Leng's total amount payable for Project C based on Debit Note No of S3-DN3B1013
+Rewritten Query: Mable Leng total amount payable Project C Debit Note S3-DN3B1013
+
+Example 2:
+Question: What is the loan amount for Sonny Siah in project A?
+Rewritten Query: Sonny Siah loan amount project A
+
+---
+Question: {question}
+Rewritten Query:"""
+        prompt = ChatPromptTemplate.from_template(prompt_template)
+        self.query_transformer_chain = prompt | self.llm | StrOutputParser()
 
     def _build_question_answer_chain(self):
         """Builds the final question-answering part of the RAG chain."""
@@ -317,19 +338,17 @@ class QdrantRAGService:
             else:
                 logging.info("No doc_type filter applied. Using default retriever.")
 
-            # --- Retrieval Augmentation: Boost key identifiers ---
-            # Extract potential document IDs from the question to improve retrieval accuracy for specific documents.
-            # This helps the retriever prioritize documents that contain these exact strings.
-            doc_ids = re.findall(r'\b[A-Z0-9]+-[A-Z]{2}\w+\b', question, re.IGNORECASE)
-            retrieval_question = question
-            if doc_ids:
-                id_string = " ".join(doc_ids)
-                retrieval_question = f"{question} {id_string}"
-                logging.info(f"Augmented retrieval query with IDs: '{id_string}'")
-
             # --- World-Class RAG: Separate retrieval from generation for better control ---
-            # Step 1: Retrieve documents from the vector store.
-            logging.info("Step 1: Retrieving relevant documents...")
+            # Step 1a: Transform the query for better retrieval using an LLM.
+            # This converts a natural language question into a keyword-rich query,
+            # significantly improving accuracy for questions with specific identifiers.
+            logging.info("Step 1a: Transforming query for retrieval...")
+            retrieval_question = await self.query_transformer_chain.ainvoke({"question": question})
+            retrieval_question = retrieval_question.strip()
+            logging.info(f" -> Transformed query: '{retrieval_question}'")
+
+            # Step 1b: Retrieve documents from the vector store using the transformed query.
+            logging.info("Step 1b: Retrieving relevant documents...")
             retrieved_docs = await active_retriever.ainvoke(retrieval_question)
 
             # Step 2: Explicitly handle the case where no documents are found.
@@ -341,7 +360,7 @@ class QdrantRAGService:
                 }
 
             # Step 3: If documents are found, invoke the LLM with the context.
-            logging.info(f"Step 2: Found {len(retrieved_docs)} documents. Invoking LLM chain...")
+            logging.info(f"Step 2: Found {len(retrieved_docs)} documents. Invoking LLM for answer generation...")
             invocation_start_time = time.time()
 
             # --- CONTEXT FORMATTING ---
