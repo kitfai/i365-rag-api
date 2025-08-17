@@ -18,24 +18,15 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_qdrant import QdrantVectorStore
+from unstructured.partition.auto import partition
 from langchain.retrievers import ParentDocumentRetriever
-from langchain.retrievers.multi_query import MultiQueryRetriever
 from langchain_openai import ChatOpenAI
-
-from threading import Lock
-
-#from marker.convert import convert_single_pdf
-#from marker.models import load_all_models
 
 # --- Qdrant & Configuration ---
 import qdrant_client
 from qdrant_client.http import models
 from qdrant_client.http.exceptions import UnexpectedResponse
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from marker.converters.pdf import PdfConverter
-from marker.models import create_model_dict
-from marker.output import text_from_rendered
-from pypdfium2 import PdfiumError
 
 # --- Define Document Types ---
 DocType = Literal["Invoice", "Interest Advice", "Billing", "Unknown"]
@@ -51,7 +42,7 @@ class RagSettings(BaseSettings):
     QDRANT_PORT: int = 6333
     QDRANT_COLLECTION_NAME: str = "rag_parent_documents"
     EMBEDDING_MODEL_NAME: str = 'BAAI/bge-large-en-v1.5'
-    RETRIEVER_TOP_K: int = 1  # New setting, reduced from 5 to 3
+    RETRIEVER_TOP_K: int = 3  # New setting, reduced from 5 to 3
 
     # --- VLLM Server Configuration ---
     # The model name as served by your vLLM instance
@@ -63,11 +54,6 @@ class RagSettings(BaseSettings):
     # --- Classifier Model ---
     # For simplicity, we use the same vLLM endpoint for classification
     LLM_CLASSIFIER_MODEL: str = "llama-3-8b-instruct"
-
-    # --- Marker PDF Conversion Settings ---
-    # Backend for marker-pdf. "vllm" for GPU, "torch" for CPU/GPU.
-    MARKER_LLM_BACKEND: str = "vllm"
-    MARKER_BATCH_MULTIPLIER: int = 4
 
     # --- LLM Generation Parameters ---
     LLM_TIMEOUT: int = 360
@@ -116,8 +102,6 @@ class QdrantRAGService:
         if self._initialized:
             return
 
-        self.lock = Lock()
-
         logging.info("--- Initializing Qdrant RAG Service (Singleton Instance) ---")
 
         self.qdrant_client = qdrant_client.QdrantClient(host=settings.QDRANT_HOST, port=settings.QDRANT_PORT)
@@ -142,21 +126,8 @@ class QdrantRAGService:
 
         self.embeddings = HuggingFaceEmbeddings(
             model_name=settings.EMBEDDING_MODEL_NAME,
-            #model_kwargs={'device': 'cpu'}
             model_kwargs={'device': 'cuda' if torch.cuda.is_available() else 'cpu'}
         )
-
-        # Load marker-pdf models once during initialization for efficiency
-        logging.info(f"Loading marker-pdf models...")
-        try:
-            # Create the model dictionary and converter once to be reused by all threads
-            model_dict = create_model_dict()
-            self.marker_converter = PdfConverter(artifact_dict=model_dict)
-            if not self.marker_converter:
-                raise RuntimeError("PdfConverter initialization failed.")
-        except Exception as e:
-            logging.critical(f"CRITICAL ERROR: Failed to load marker-pdf models. The RAG service cannot start.", exc_info=True)
-            raise RuntimeError("Failed to initialize marker-pdf models. Check logs for details on the underlying error (e.g., GPU memory, CUDA version, network issues).") from e
 
         self._setup_qdrant_collection(force_rebuild)
 
@@ -174,43 +145,26 @@ class QdrantRAGService:
         # This splitter is used to create small, searchable chunks from the parent documents.
         child_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
 
-        # This splitter creates the large "parent" documents that will be retrieved.
-        # Its chunk size is set to be large enough to provide good context, but small
-        # enough to ensure it fits within the LLM's context window, preventing overflow errors.
-        parent_splitter = RecursiveCharacterTextSplitter(chunk_size=4000, chunk_overlap=200)
-
         # Use the ParentDocumentRetriever directly for robustness and simplicity.
         self.retriever = ParentDocumentRetriever(
             vectorstore=self.vectorstore,
             docstore=self.docstore,
             child_splitter=child_splitter,
-            parent_splitter=parent_splitter,
         )
         self.retriever.search_kwargs = {"k": settings.RETRIEVER_TOP_K}  # Fetch top 5 candidate documents
 
         self._build_question_answer_chain()
-        self._build_multi_query_chain()
 
         self._initialized = True
         logging.info("--- RAG Service is ready for queries. ---")
-
-    def _build_multi_query_chain(self):
-        """Builds the prompt for the MultiQueryRetriever."""
-        template = """You are an AI language model assistant. Your task is to generate 3 different versions of the given user question to retrieve relevant documents from a vector database.
-By generating multiple perspectives on the user question, your goal is to help the user overcome some of the limitations of distance-based similarity search.
-Focus on extracting key entities like names, document numbers, and project details. One of the queries should be just a string of these keywords.
-
-Original question: {question}"""
-        self.multi_query_prompt = ChatPromptTemplate.from_template(template)
 
     def _build_question_answer_chain(self):
         """Builds the final question-answering part of the RAG chain."""
         prompt_template = """You are a deterministic data extraction script. Your only function is to execute a checklist to find facts in the <context> that exactly match the <question>.
 
-        **Context Awareness Rule:** The <context> is generated from automated PDF extraction and may be jumbled. Each document's content is enclosed between `--- START OF DOCUMENT: [document_name.pdf] ---` and the next document's start. You MUST use your reasoning to connect "Document No" to the relevant Document Type (Example where if the Document contains "Credit Note", look for "Credit Note No", if the Document contains "Debit Note", look for "Debit Note No", etc.) if they are not perfectly aligned. You MUST use the document name from the header for citation.
-        
+        **Context Awareness Rule:** The <context> is generated from automated PDF extraction and may be jumbled. Table rows might be flattened into a single line. You MUST use your reasoning to connect headers (like "Document No") with nearby values (like "0010008359"), even if they are not perfectly aligned.The context contains headers like `## [CHUNK N | PAGE M]` that you MUST use for citation.
+
         **Your Process:**
-        -   **Retrieval Imperfection Rule:** The provided <context> may contain irrelevant documents because of system limitations. You MUST prioritize finding a document whose name or content explicitly matches key entities in the <question> (like a document number or type) before extracting the answer.
         1.  **Deconstruct Question:** Break down the user's <question> into a checklist of required entities.
         2.  **Scan for Evidence:** Find a single, continuous block of text in the <context> that contains ALL the entities from your checklist.
         3.  **Verify Checklist:** In the <scratchpad>, you MUST fill out the verification checklist. For each item, you must state Yes or No.
@@ -254,8 +208,9 @@ Original question: {question}"""
         *Provide a concise, direct answer to the user's question based on your findings.*
 
         ## Detailed Breakdown
-        *List every single piece of evidence you used to construct the summary answer. For each fact, you MUST cite the source document name where you found it, which is provided in the context headers.*
-        -   Fact 1 (from `document_name.pdf`)
+        *List every single piece of evidence you used to construct the summary answer. For each fact, you MUST cite the document, page, and chunk number where you found it.*
+        -   Fact 1 (from `document_name.pdf`, Page 2, Chunk 5)
+        -   Fact 2 (from `document_name.pdf`, Page 2, Chunk 6)
 
 
         ## Source Documents
@@ -334,16 +289,10 @@ Original question: {question}"""
             else:
                 logging.info("No doc_type filter applied. Using default retriever.")
 
-            # --- World-Class RAG: Multi-Query Retrieval ---
-            # Instead of simple query transformation, use an LLM to generate multiple queries
-            # from different perspectives. This is highly effective for complex questions
-            # with specific identifiers.
-            logging.info("Step 1: Generating multiple queries for robust retrieval...")
-            multi_query_retriever = MultiQueryRetriever.from_llm(
-                retriever=active_retriever, llm=self.llm, prompt=self.multi_query_prompt
-            )
-
-            retrieved_docs = await multi_query_retriever.ainvoke(question)
+            # --- World-Class RAG: Separate retrieval from generation for better control ---
+            # Step 1: Retrieve documents from the vector store.
+            logging.info("Step 1: Retrieving relevant documents...")
+            retrieved_docs = await active_retriever.ainvoke(question)
 
             # Step 2: Explicitly handle the case where no documents are found.
             if not retrieved_docs:
@@ -354,23 +303,12 @@ Original question: {question}"""
                 }
 
             # Step 3: If documents are found, invoke the LLM with the context.
-            logging.info(f"Step 2: Found {len(retrieved_docs)} documents. Invoking LLM for answer generation...")
+            logging.info(f"Step 2: Found {len(retrieved_docs)} documents. Invoking LLM chain...")
             invocation_start_time = time.time()
-
-            # --- CONTEXT FORMATTING ---
-            # Format the context to include document source headers for the LLM.
-            # This matches the updated prompt instructions for marker-pdf output.
-            formatted_context_docs = []
-            for doc in retrieved_docs:
-                source_name = Path(doc.metadata.get("source", "Unknown Document")).name
-                header = f"--- START OF DOCUMENT: {source_name} ---\n"
-                # Create a new document to avoid modifying the original retrieved docs
-                formatted_doc = LangchainDocument(page_content=header + doc.page_content, metadata=doc.metadata)
-                formatted_context_docs.append(formatted_doc)
 
             raw_answer = await self.question_answer_chain.ainvoke({
                 "input": question,
-                "context": formatted_context_docs
+                "context": retrieved_docs
             })
 
             invocation_end_time = time.time()
@@ -401,13 +339,13 @@ Original question: {question}"""
             "source_documents": source_docs_formatted
         }
 
-    def process_new_documents(self):
-        """Public method to run the synchronous document processing task."""
+    async def process_new_documents(self):
+        """Public method to run the async document processing task."""
         logging.info("Starting document ingestion process...")
-        self._process_and_upload_documents()
+        await self._process_and_upload_documents()
         logging.info("--- Document ingestion has finished. ---")
 
-    def _classify_document_type(self, content: str) -> DocType:
+    async def _classify_document_type(self, content: str) -> DocType:
         valid_types = ", ".join([t for t in DocType.__args__ if t != "Unknown"])
         prompt = ChatPromptTemplate.from_template(
             "You are an automated document classification system. Your ONLY function is to output a single word from the provided list.\n"
@@ -421,7 +359,7 @@ Original question: {question}"""
             "Classification:"
         )
         chain = prompt | self.classifier_llm | StrOutputParser()
-        response_text = chain.invoke({"text_sample": content[:2000]})
+        response_text = await chain.ainvoke({"text_sample": content[:2000]})
 
         # Clean up the response for more reliable matching
         cleaned_response = response_text.lower().strip()
@@ -443,53 +381,54 @@ Original question: {question}"""
         return "Invoice"
 
     def _process_pdf_to_markdown(self, pdf_path: Path) -> Optional[str]:
-        """
-        Converts a PDF file to markdown using marker-pdf.
-        This is a synchronous method intended to be run in a separate thread.
-        """
-        logging.info(f" -> Starting markdown extraction for {pdf_path.name} using marker-pdf")
-        if not hasattr(self, 'marker_converter') or not self.marker_converter:
-            logging.error("Marker converter is not loaded. Cannot process PDF.")
+        logging.info(f" -> Starting markdown extraction for {pdf_path.name}")
+        try:
+            # This resolves the deprecation warning from the unstructured library.
+            elements = partition(
+                filename=str(pdf_path),
+                strategy="hi_res",
+                infer_table_structure=True,
+                languages=["eng"],
+                output_format="markdown",
+                size={"longest_edge": 2048}
+            )
+            '''markdown_content = "\n\n".join([el.text for el in elements])
+
+            # This will print the full extracted text to your log file for verification.
+            logging.debug(f"--- Extracted Markdown for {pdf_path.name} ---\n{markdown_content}\n--- End Markdown ---")
+
+            logging.info(f" -> Successfully extracted markdown from {pdf_path.name}")
+            return markdown_content if markdown_content.strip() else None'''
+            formatted_chunks = []
+            for i, el in enumerate(elements):
+                # Default to page 1 if metadata is missing for any reason
+                page_num = el.metadata.page_number or 1
+                # Create a clear header for each logical chunk from unstructured
+                chunk_header = f"## [CHUNK {i + 1} | PAGE {page_num}]"
+                formatted_chunks.append(f"{chunk_header}\n{el.text}")
+
+            # Join the formatted chunks with a distinct separator
+            markdown_content = "\n\n---\n\n".join(formatted_chunks)
+
+            logging.debug(f"--- Enriched Markdown for {pdf_path.name} ---\n{markdown_content}\n--- End Markdown ---")
+            logging.info(f" -> Successfully extracted enriched markdown from {pdf_path.name}")
+            return markdown_content if markdown_content.strip() else None
+
+
+        except Exception as e:
+            logging.error(f" -> Error processing {pdf_path.name} to markdown: {e}", exc_info=True)
             return None
 
-        with self.lock:
-            try:
-                rendered = self.marker_converter(str(pdf_path))
-                markdown_text, _, images = text_from_rendered(rendered)
-
-                if not markdown_text or not markdown_text.strip():
-                    logging.warning(f" -> Marker-pdf produced no content for {pdf_path.name}. Skipping file.")
-                    return None
-
-                logging.debug(f"--- Extracted Markdown for {pdf_path.name} ---\n{markdown_text}\n--- End Markdown ---")
-                logging.info(f" -> Successfully extracted markdown from {pdf_path.name} (Length: {len(markdown_text)})")
-                return markdown_text
-
-            except PdfiumError as pe:
-                logging.error(
-                    f" -> PDFIUM ERROR processing {pdf_path.name}. The file is likely corrupted or password-protected. Skipping file. Details: {pe}",
-                    exc_info=False
-                )
-                return None
-            except Exception as e:
-                logging.error(f" -> Error processing {pdf_path.name} with marker-pdf: {e}", exc_info=True)
-                return None
-            finally:
-                # Proactively free up cached GPU memory after each conversion
-                # to prevent out-of-memory errors in tight VRAM environments.
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-
-    def _process_single_pdf(self, pdf_file: Path, indexed_files: set):
+    async def _process_single_pdf(self, pdf_file: Path, indexed_files: set):
         if pdf_file.name in indexed_files:
             return None
-        markdown_content = self._process_pdf_to_markdown(pdf_file)
+        logging.info(f"  -> Spawning worker thread for: {pdf_file.name}")
+        markdown_content = await asyncio.to_thread(self._process_pdf_to_markdown, pdf_file)
         if not markdown_content:
             return None
         logging.info(f"  -> Markdown content received for {pdf_file.name}. Classifying document type...")
         try:
-            #ckf remove this as the marker needs a lot of mem doc_type = self._classify_document_type(markdown_content)
-            doc_type = "Invoice"
+            doc_type = await self._classify_document_type(markdown_content)
             logging.info(f"  -> Classified {pdf_file.name} as type: {doc_type}. Now adding to retriever.")
 
             parent_doc = LangchainDocument(
@@ -497,8 +436,10 @@ Original question: {question}"""
                 metadata={"source": str(pdf_file), "doc_type": doc_type}
             )
 
-            # Direct synchronous call to add documents to the retriever.
-            self.retriever.add_documents(
+            # The `add_documents` method of the ParentDocumentRetriever is synchronous.
+            # We must run it in a separate thread to avoid blocking the asyncio event loop.
+            await asyncio.to_thread(
+                self.retriever.add_documents,
                 [parent_doc],
                 ids=None
             )
@@ -509,7 +450,7 @@ Original question: {question}"""
             logging.error(f"  -> FAILED to process {pdf_file.name} after content extraction: {e}", exc_info=True)
             return None
 
-    def _process_and_upload_documents(self):
+    async def _process_and_upload_documents(self):
         logging.info("Step 1/3: Checking for already indexed files in Qdrant...")
         try:
             # A small optimization to only fetch the metadata field we need, not the vectors.
@@ -535,10 +476,8 @@ Original question: {question}"""
             return
 
         logging.info(f" -> Found {len(pdfs_to_process)} new documents to process.")
-        logging.info(f"Step 3/3: Processing new documents sequentially...")
-        results = []
-        for pdf_file in pdfs_to_process:
-            results.append(self._process_single_pdf(pdf_file, indexed_files))
-
+        logging.info("Step 3/3: Processing new documents in parallel...")
+        tasks = [self._process_single_pdf(pdf_file, indexed_files) for pdf_file in pdfs_to_process]
+        results = await asyncio.gather(*tasks)
         processed_count = sum(1 for r in results if r is not None)
-        logging.info(f" -> Sequential processing complete. Successfully added {processed_count} new documents.")
+        logging.info(f" -> Parallel processing complete. Successfully added {processed_count} new documents.")

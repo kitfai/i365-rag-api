@@ -33,8 +33,7 @@ async def main():
 
     # 2. Explicitly run the document processing and ingestion pipeline.
     # This will find all PDFs, process them, and upload them to the fresh collection.
-    #await rag_service.process_new_documents()
-    rag_service.process_new_documents()
+    await rag_service.process_new_documents()
     #rag_service = QdrantRAGService()
     # --- Define Your Test Query Here ---
     test_question = "List out all the details of billings billed to MR MUHAMEED AZAM BIN ALISAN"
