@@ -67,7 +67,6 @@ class RagSettings(BaseSettings):
     # Backend for marker-pdf. "vllm" for GPU, "torch" for CPU/GPU.
     MARKER_LLM_BACKEND: str = "vllm"
     MARKER_BATCH_MULTIPLIER: int = 4
-    PDF_PROCESSING_WORKERS: int = 1  # Limit concurrent PDF processing tasks to reduce GPU load
 
     # --- LLM Generation Parameters ---
     LLM_TIMEOUT: int = 360
@@ -117,7 +116,6 @@ class QdrantRAGService:
             return
 
         self.lock = Lock()
-        self.pdf_processing_semaphore = asyncio.Semaphore(settings.PDF_PROCESSING_WORKERS)
 
         logging.info("--- Initializing Qdrant RAG Service (Singleton Instance) ---")
 
@@ -378,13 +376,13 @@ class QdrantRAGService:
             "source_documents": source_docs_formatted
         }
 
-    async def process_new_documents(self):
-        """Public method to run the async document processing task."""
+    def process_new_documents(self):
+        """Public method to run the synchronous document processing task."""
         logging.info("Starting document ingestion process...")
-        await self._process_and_upload_documents()
+        self._process_and_upload_documents()
         logging.info("--- Document ingestion has finished. ---")
 
-    async def _classify_document_type(self, content: str) -> DocType:
+    def _classify_document_type(self, content: str) -> DocType:
         valid_types = ", ".join([t for t in DocType.__args__ if t != "Unknown"])
         prompt = ChatPromptTemplate.from_template(
             "You are an automated document classification system. Your ONLY function is to output a single word from the provided list.\n"
@@ -398,7 +396,7 @@ class QdrantRAGService:
             "Classification:"
         )
         chain = prompt | self.classifier_llm | StrOutputParser()
-        response_text = await chain.ainvoke({"text_sample": content[:2000]})
+        response_text = chain.invoke({"text_sample": content[:2000]})
 
         # Clean up the response for more reliable matching
         cleaned_response = response_text.lower().strip()
@@ -457,16 +455,15 @@ class QdrantRAGService:
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
 
-    async def _process_single_pdf(self, pdf_file: Path, indexed_files: set):
+    def _process_single_pdf(self, pdf_file: Path, indexed_files: set):
         if pdf_file.name in indexed_files:
             return None
-        logging.info(f"  -> Spawning worker thread for: {pdf_file.name}")
-        markdown_content = await asyncio.to_thread(self._process_pdf_to_markdown, pdf_file)
+        markdown_content = self._process_pdf_to_markdown(pdf_file)
         if not markdown_content:
             return None
         logging.info(f"  -> Markdown content received for {pdf_file.name}. Classifying document type...")
         try:
-            doc_type = await self._classify_document_type(markdown_content)
+            doc_type = self._classify_document_type(markdown_content)
             logging.info(f"  -> Classified {pdf_file.name} as type: {doc_type}. Now adding to retriever.")
 
             parent_doc = LangchainDocument(
@@ -474,10 +471,8 @@ class QdrantRAGService:
                 metadata={"source": str(pdf_file), "doc_type": doc_type}
             )
 
-            # The `add_documents` method of the ParentDocumentRetriever is synchronous.
-            # We must run it in a separate thread to avoid blocking the asyncio event loop.
-            await asyncio.to_thread(
-                self.retriever.add_documents,
+            # Direct synchronous call to add documents to the retriever.
+            self.retriever.add_documents(
                 [parent_doc],
                 ids=None
             )
@@ -488,12 +483,7 @@ class QdrantRAGService:
             logging.error(f"  -> FAILED to process {pdf_file.name} after content extraction: {e}", exc_info=True)
             return None
 
-    async def run_pdf_worker(self, pdf_file: Path, indexed_files: set):
-        """A wrapper for _process_single_pdf to control concurrency with a semaphore."""
-        async with self.pdf_processing_semaphore:
-            return await self._process_single_pdf(pdf_file, indexed_files)
-
-    async def _process_and_upload_documents(self):
+    def _process_and_upload_documents(self):
         logging.info("Step 1/3: Checking for already indexed files in Qdrant...")
         try:
             # A small optimization to only fetch the metadata field we need, not the vectors.
@@ -519,8 +509,10 @@ class QdrantRAGService:
             return
 
         logging.info(f" -> Found {len(pdfs_to_process)} new documents to process.")
-        logging.info(f"Step 3/3: Processing new documents in parallel (max {settings.PDF_PROCESSING_WORKERS} workers)...")
-        tasks = [self.run_pdf_worker(pdf_file, indexed_files) for pdf_file in pdfs_to_process]
-        results = await asyncio.gather(*tasks)
+        logging.info(f"Step 3/3: Processing new documents sequentially...")
+        results = []
+        for pdf_file in pdfs_to_process:
+            results.append(self._process_single_pdf(pdf_file, indexed_files))
+
         processed_count = sum(1 for r in results if r is not None)
-        logging.info(f" -> Parallel processing complete. Successfully added {processed_count} new documents.")
+        logging.info(f" -> Sequential processing complete. Successfully added {processed_count} new documents.")
