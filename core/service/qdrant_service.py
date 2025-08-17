@@ -21,8 +21,8 @@ from langchain_qdrant import QdrantVectorStore
 from langchain.retrievers import ParentDocumentRetriever
 from langchain_openai import ChatOpenAI
 
-from marker.convert import convert_single_pdf
-from marker.models import load_all_models
+#from marker.convert import convert_single_pdf
+#from marker.models import load_all_models
 
 # --- Qdrant & Configuration ---
 import qdrant_client
