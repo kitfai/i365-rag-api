@@ -19,6 +19,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_qdrant import QdrantVectorStore
 from langchain.retrievers import ParentDocumentRetriever
+from langchain.retrievers.multi_query import MultiQueryRetriever
 from langchain_openai import ChatOpenAI
 
 from threading import Lock
@@ -182,30 +183,19 @@ class QdrantRAGService:
         self.retriever.search_kwargs = {"k": settings.RETRIEVER_TOP_K}  # Fetch top 5 candidate documents
 
         self._build_question_answer_chain()
-        self._build_query_transformer_chain()
+        self._build_multi_query_chain()
 
         self._initialized = True
         logging.info("--- RAG Service is ready for queries. ---")
 
-    def _build_query_transformer_chain(self):
-        """Builds a chain to rewrite a user's question into a more retriever-friendly format."""
-        prompt_template = """You are an expert at query optimization for vector databases. Your task is to transform a user's question into a concise, keyword-rich query.
-Extract all key entities like names, document numbers, project names, and specific metrics.
-Combine these entities into a single, space-separated string. Do not add any conversational text.
+    def _build_multi_query_chain(self):
+        """Builds the prompt for the MultiQueryRetriever."""
+        template = """You are an AI language model assistant. Your task is to generate 3 different versions of the given user question to retrieve relevant documents from a vector database.
+By generating multiple perspectives on the user question, your goal is to help the user overcome some of the limitations of distance-based similarity search.
+Focus on extracting key entities like names, document numbers, and project details. One of the queries should be just a string of these keywords.
 
-Example 1:
-Question: How much is Mable Leng's total amount payable for Project C based on Debit Note No of S3-DN3B1013
-Rewritten Query: Mable Leng total amount payable Project C Debit Note S3-DN3B1013
-
-Example 2:
-Question: What is the loan amount for Sonny Siah in project A?
-Rewritten Query: Sonny Siah loan amount project A
-
----
-Question: {question}
-Rewritten Query:"""
-        prompt = ChatPromptTemplate.from_template(prompt_template)
-        self.query_transformer_chain = prompt | self.llm | StrOutputParser()
+Original question: {question}"""
+        self.multi_query_prompt = ChatPromptTemplate.from_template(template)
 
     def _build_question_answer_chain(self):
         """Builds the final question-answering part of the RAG chain."""
@@ -338,18 +328,16 @@ Rewritten Query:"""
             else:
                 logging.info("No doc_type filter applied. Using default retriever.")
 
-            # --- World-Class RAG: Separate retrieval from generation for better control ---
-            # Step 1a: Transform the query for better retrieval using an LLM.
-            # This converts a natural language question into a keyword-rich query,
-            # significantly improving accuracy for questions with specific identifiers.
-            logging.info("Step 1a: Transforming query for retrieval...")
-            retrieval_question = await self.query_transformer_chain.ainvoke({"question": question})
-            retrieval_question = retrieval_question.strip()
-            logging.info(f" -> Transformed query: '{retrieval_question}'")
+            # --- World-Class RAG: Multi-Query Retrieval ---
+            # Instead of simple query transformation, use an LLM to generate multiple queries
+            # from different perspectives. This is highly effective for complex questions
+            # with specific identifiers.
+            logging.info("Step 1: Generating multiple queries for robust retrieval...")
+            multi_query_retriever = MultiQueryRetriever.from_llm(
+                retriever=active_retriever, llm=self.llm, prompt=self.multi_query_prompt
+            )
 
-            # Step 1b: Retrieve documents from the vector store using the transformed query.
-            logging.info("Step 1b: Retrieving relevant documents...")
-            retrieved_docs = await active_retriever.ainvoke(retrieval_question)
+            retrieved_docs = await multi_query_retriever.ainvoke(question)
 
             # Step 2: Explicitly handle the case where no documents are found.
             if not retrieved_docs:
